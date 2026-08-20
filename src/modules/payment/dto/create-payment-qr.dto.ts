@@ -5,6 +5,9 @@ export class CreatePaymentQrDto {
   @IsMongoId({ message: 'orderId không hợp lệ' })
   orderId: string;
 
+  @IsMongoId({ message: 'orderUserId không hợp lệ' })
+  orderUserId: string;
+
   @Type(() => Number)
   @IsInt({ message: 'Số tiền phải là số nguyên VND' })
   @Min(1, { message: 'Số tiền phải lớn hơn 0' })

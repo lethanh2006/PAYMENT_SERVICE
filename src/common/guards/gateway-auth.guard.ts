@@ -54,6 +54,10 @@ export class GatewayAuthGuard implements CanActivate {
       body !== null && typeof body === 'object' && !Array.isArray(body)
         ? (body as Record<string, unknown>)
         : {};
-    return createQrRequestContext(record.orderId, record.amount);
+    return createQrRequestContext(
+      record.orderId,
+      record.orderUserId,
+      record.amount,
+    );
   }
 }

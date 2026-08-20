@@ -16,8 +16,11 @@ const userPayload = Buffer.from(JSON.stringify(user)).toString('base64');
 
 const tamperedResponse = await fetch(`${baseUrl}/api/payment/create-qr`, {
   method: 'POST',
-  headers: gatewayHeaders('smoke-tampered', createContext(orderId, amount)),
-  body: JSON.stringify({ orderId, amount: 1 }),
+  headers: gatewayHeaders(
+    'smoke-tampered',
+    createContext(orderId, userId, amount),
+  ),
+  body: JSON.stringify({ orderId, orderUserId: userId, amount: 1 }),
 });
 assert(
   tamperedResponse.status === 401,
@@ -26,8 +29,11 @@ assert(
 
 const createResponse = await fetch(`${baseUrl}/api/payment/create-qr`, {
   method: 'POST',
-  headers: gatewayHeaders('smoke-create', createContext(orderId, amount)),
-  body: JSON.stringify({ orderId, amount }),
+  headers: gatewayHeaders(
+    'smoke-create',
+    createContext(orderId, userId, amount),
+  ),
+  body: JSON.stringify({ orderId, orderUserId: userId, amount }),
 });
 const created = await json(createResponse);
 assert(createResponse.ok, `Tạo QR thất bại: ${JSON.stringify(created)}`);
@@ -127,8 +133,13 @@ function gatewayHeaders(requestId, context) {
   };
 }
 
-function createContext(targetOrderId, targetAmount) {
-  return JSON.stringify(['payment.create-qr.v1', targetOrderId, targetAmount]);
+function createContext(targetOrderId, targetOrderUserId, targetAmount) {
+  return JSON.stringify([
+    'payment.create-qr.v2',
+    targetOrderId,
+    targetOrderUserId,
+    targetAmount,
+  ]);
 }
 
 function sortValue(value) {

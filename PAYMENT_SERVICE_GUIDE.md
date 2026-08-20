@@ -199,7 +199,7 @@ sequenceDiagram
     G->>C: GET Order + signed identity
     C-->>G: owner, status, paymentStatus, method, finalAmount
     G->>G: kiểm quyền và điều kiện thanh toán
-    G->>P: {orderId, finalAmount} + body-bound HMAC
+    G->>P: {orderId, orderUserId, finalAmount} + body-bound HMAC
     P->>DB: advisory lock theo orderId
     P->>DB: reuse PENDING hoặc tạo intent mới
     DB-->>P: Payment
@@ -220,13 +220,17 @@ Gateway đọc `finalAmount` từ Canteen rồi mới gửi nội bộ:
 ```json
 {
   "orderId": "66c6a6a6a6a6a6a6a6a6a6a6",
+  "orderUserId": "66c6b6b6b6b6b6b6b6b6b6b6",
   "amount": 125000
 }
 ```
 
 Payment dùng `pg_advisory_xact_lock(hashtext(orderId))` để hai request tạo QR
-đồng thời không tạo hai intent. Nếu intent `PENDING` còn hạn, cùng user và cùng
-amount, Payment trả lại intent cũ.
+đồng thời không tạo hai intent. `orderUserId` là chủ Order do Canteen trả về,
+không phải mặc định là người đang thao tác. Payment chỉ cho chính chủ hoặc
+`admin`, `manager`, `cashier` tạo intent, rồi luôn lưu chủ Order vào
+`payments.user_id`. Nếu intent `PENDING` còn hạn, cùng chủ đơn và cùng amount,
+Payment trả lại intent cũ.
 
 Mã chuyển khoản có dạng mặc định:
 
@@ -256,14 +260,16 @@ HMAC_SHA256(secret, timestamp + "." + requestId + "." + userPayload)
 Request tạo QR còn ký thêm context:
 
 ```text
-context = JSON.stringify(["payment.create-qr.v1", orderId, amount])
+context = JSON.stringify([
+  "payment.create-qr.v2", orderId, orderUserId, amount
+])
 HMAC_SHA256(secret,
   timestamp + "." + requestId + "." + userPayload + "." + context)
 ```
 
-Vì `orderId` và `amount` nằm trong chữ ký, kẻ tấn công không thể chụp một bộ
-header hợp lệ rồi đổi body sang số tiền nhỏ hơn. Timestamp mặc định chỉ có hiệu
-lực 5 phút và được so sánh constant-time.
+Vì `orderId`, `orderUserId` và `amount` đều nằm trong chữ ký, kẻ tấn công không
+thể chụp một bộ header hợp lệ rồi đổi chủ đơn hoặc số tiền trong body. Timestamp
+mặc định chỉ có hiệu lực 5 phút và được so sánh constant-time.
 
 `PAYMENT_INTERNAL_SECRET` phải giống nhau ở Gateway và Payment, tối thiểu 32 ký
 tự trong production.
@@ -414,7 +420,8 @@ Response tạo QR:
 ### 11.2 Quyền truy cập
 
 - User chỉ xem/tạo payment của Order mình sở hữu.
-- `admin`, `manager`, `cashier` có quyền đặc biệt ở Payment.
+- `admin`, `manager`, `cashier` có thể tạo QR thay chủ Order, nhưng payment vẫn
+  lưu `userId` của chủ Order để event đồng bộ đúng sang Canteen.
 - Gateway còn kiểm tra owner trước khi gọi Payment.
 - Payment không tin `x-user-payload` trần; chữ ký nội bộ là bắt buộc trong
   production.

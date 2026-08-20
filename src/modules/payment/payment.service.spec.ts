@@ -64,7 +64,11 @@ describe('PaymentService', () => {
 
   it('tạo intent VietQR từ amount đã được Gateway xác minh', async () => {
     const response = await service.createQr(
-      { orderId: '66c6a6a6a6a6a6a6a6a6a6a6', amount: 50_000 },
+      {
+        orderId: '66c6a6a6a6a6a6a6a6a6a6a6',
+        orderUserId: '66c6b6b6b6b6b6b6b6b6b6b6',
+        amount: 50_000,
+      },
       { _id: '66c6b6b6b6b6b6b6b6b6b6b6', role: 'user' },
     );
 
@@ -87,6 +91,37 @@ describe('PaymentService', () => {
         currency: 'VND',
       }),
     );
+  });
+
+  it('lưu chủ đơn thay vì nhân viên tạo QR hộ', async () => {
+    await service.createQr(
+      {
+        orderId: '66c6a6a6a6a6a6a6a6a6a6a6',
+        orderUserId: '66c6b6b6b6b6b6b6b6b6b6b6',
+        amount: 50_000,
+      },
+      { _id: '66c6c6c6c6c6c6c6c6c6c6c6', role: 'cashier' },
+    );
+
+    expect(createOrReuse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: '66c6b6b6b6b6b6b6b6b6b6b6',
+      }),
+    );
+  });
+
+  it('từ chối người thường tạo QR cho đơn của người khác', async () => {
+    await expect(
+      service.createQr(
+        {
+          orderId: '66c6a6a6a6a6a6a6a6a6a6a6',
+          orderUserId: '66c6b6b6b6b6b6b6b6b6b6b6',
+          amount: 50_000,
+        },
+        { _id: '66c6c6c6c6c6c6c6c6c6c6c6', role: 'user' },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(createOrReuse).not.toHaveBeenCalled();
   });
 
   it('dùng amount thực nhận từ Casso và parse mã trong mô tả URL-encoded', async () => {

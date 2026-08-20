@@ -38,7 +38,7 @@ describe('GatewaySignatureService', () => {
     const timestamp = Date.now().toString();
     const requestId = 'request-create-qr';
     const payload = Buffer.from('{"_id":"user-1"}').toString('base64');
-    const context = createQrRequestContext('order-1', 125_000);
+    const context = createQrRequestContext('order-1', 'order-user-1', 125_000);
 
     expect(() =>
       service.assertTrusted({
@@ -56,8 +56,43 @@ describe('GatewaySignatureService', () => {
     const timestamp = Date.now().toString();
     const requestId = 'request-tampered';
     const payload = Buffer.from('{"_id":"user-1"}').toString('base64');
-    const signedContext = createQrRequestContext('order-1', 125_000);
-    const tamperedContext = createQrRequestContext('order-1', 1_000);
+    const signedContext = createQrRequestContext(
+      'order-1',
+      'order-user-1',
+      125_000,
+    );
+    const tamperedContext = createQrRequestContext(
+      'order-1',
+      'order-user-1',
+      1_000,
+    );
+
+    expect(() =>
+      service.assertTrusted({
+        timestamp,
+        requestId,
+        payload,
+        context: tamperedContext,
+        signature: signature(timestamp, requestId, payload, signedContext),
+      }),
+    ).toThrow(UnauthorizedException);
+  });
+
+  it('từ chối khi chủ đơn bị đổi sau lúc Gateway ký', () => {
+    const service = createService();
+    const timestamp = Date.now().toString();
+    const requestId = 'request-tampered-owner';
+    const payload = Buffer.from('{"_id":"cashier-1"}').toString('base64');
+    const signedContext = createQrRequestContext(
+      'order-1',
+      'order-user-1',
+      125_000,
+    );
+    const tamperedContext = createQrRequestContext(
+      'order-1',
+      'order-user-2',
+      125_000,
+    );
 
     expect(() =>
       service.assertTrusted({

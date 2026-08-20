@@ -94,7 +94,7 @@ export class PaymentService {
     dto: CreatePaymentQrDto,
     user: AuthenticatedUser | undefined,
   ): Promise<PaymentResponse> {
-    const userId = this.requireUserId(user);
+    this.assertCanCreateForOrder(dto.orderUserId, user);
     const paymentCode = `${this.paymentCodePrefix}${randomBytes(8)
       .toString('hex')
       .toUpperCase()}`;
@@ -107,7 +107,7 @@ export class PaymentService {
     Object.assign(candidate, {
       id: randomUUID(),
       orderId: dto.orderId,
-      userId,
+      userId: dto.orderUserId,
       paymentCode,
       amount: dto.amount,
       currency: 'VND',
@@ -324,6 +324,22 @@ export class PaymentService {
       throw new ForbiddenException('Không xác định được người dùng thanh toán');
     }
     return userId;
+  }
+
+  private assertCanCreateForOrder(
+    orderUserId: string,
+    user: AuthenticatedUser | undefined,
+  ): void {
+    const actorUserId = this.requireUserId(user);
+    const elevatedRoles = new Set(['admin', 'manager', 'cashier']);
+    if (
+      actorUserId !== orderUserId &&
+      !elevatedRoles.has(user?.role?.toLowerCase() ?? '')
+    ) {
+      throw new ForbiddenException(
+        'Bạn không có quyền tạo thanh toán cho đơn hàng này',
+      );
+    }
   }
 
   private assertCanRead(
