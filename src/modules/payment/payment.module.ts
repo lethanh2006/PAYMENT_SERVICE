@@ -5,6 +5,7 @@ import { PaymentController } from './payment.controller';
 import { PaymentRepository } from './payment.repository';
 import { PaymentService } from './payment.service';
 import { VietQrService } from './vietqr.service';
+import { PaymentExpiryWorker } from './payment-expiry.worker';
 
 @Module({
   controllers: [PaymentController, CassoWebhookController],
@@ -13,6 +14,7 @@ import { VietQrService } from './vietqr.service';
     PaymentRepository,
     CassoSignatureService,
     VietQrService,
+    PaymentExpiryWorker,
   ],
 })
 export class PaymentModule {}
