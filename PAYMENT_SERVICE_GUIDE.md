@@ -622,12 +622,13 @@ payment/receipt/outbox và message DLQ thử nghiệm sau khi kiểm tra xong.
 ```bash
 cd backend/payment
 
-PAYMENT_INTERNAL_SECRET='<giống backend/.env>' \
-CASSO_WEBHOOK_SECRET='<giống payment/.env>' \
-VIETQR_ACCOUNT_NUMBER='<giống payment/.env>' \
-PAYMENT_SMOKE_BASE_URL='http://127.0.0.1:5006' \
 npm run test:smoke
 ```
+
+Script npm tự đọc `payment/.env` trước rồi `backend/.env` sau, nên secret nội bộ
+dùng đúng giá trị Compose trong khi cấu hình Casso/VietQR vẫn lấy từ Payment.
+Biến môi trường đã export trong shell có độ ưu tiên cao hơn; có thể dùng cách đó
+để trỏ sang staging hoặc truyền Order test cụ thể.
 
 Script xác nhận:
 
