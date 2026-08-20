@@ -537,6 +537,18 @@ npm run migration:run
 npm run migration:revert
 ```
 
+Ba lệnh trên dành cho source checkout và sẽ build trước khi gọi TypeORM. Image
+production đã chứa `dist` nhưng không chứa Nest CLI; khi kiểm tra ngay trong
+container đang chạy, dùng bản `:compiled`:
+
+```bash
+docker compose exec payment npm run migration:show:compiled
+```
+
+Khi tạo migration job từ image production, override command thành
+`npm run migration:run:compiled` và đặt `PAYMENT_DB_RUN_MIGRATIONS=false` cho
+job. Không chạy `nest build` bên trong runtime image.
+
 Migration đầu tiên tạo ba bảng, constraint và partial index. Kiểm tra sau khi
 chạy:
 
