@@ -12,6 +12,7 @@ interface SignedGatewayHeaders {
   requestId?: string;
   signature?: string;
   timestamp?: string;
+  context?: string;
 }
 
 @Injectable()
@@ -53,7 +54,7 @@ export class GatewaySignatureService implements OnModuleInit {
       return;
     }
 
-    const { payload, requestId, signature, timestamp } = headers;
+    const { payload, requestId, signature, timestamp, context } = headers;
     if (!this.secret || !requestId || !signature || !timestamp) {
       throw new UnauthorizedException('Thông tin Gateway không hợp lệ');
     }
@@ -66,8 +67,11 @@ export class GatewaySignatureService implements OnModuleInit {
       throw new UnauthorizedException('Thông tin Gateway đã hết hạn');
     }
 
+    const signedMessage = context
+      ? `${timestamp}.${requestId}.${payload}.${context}`
+      : `${timestamp}.${requestId}.${payload}`;
     const expected = createHmac('sha256', this.secret)
-      .update(`${timestamp}.${requestId}.${payload}`)
+      .update(signedMessage)
       .digest('hex');
     const supplied = Buffer.from(signature, 'utf8');
     const expectedBuffer = Buffer.from(expected, 'utf8');

@@ -10,6 +10,7 @@ import type {
 } from '../interfaces/authenticated-user.interface';
 import { userIdOf } from '../interfaces/authenticated-user.interface';
 import { GatewaySignatureService } from '../security/gateway-signature.service';
+import { createQrRequestContext } from '../security/payment-request-context';
 
 @Injectable()
 export class GatewayAuthGuard implements CanActivate {
@@ -27,6 +28,7 @@ export class GatewayAuthGuard implements CanActivate {
       requestId: request.header('x-request-id'),
       timestamp: request.header('x-user-timestamp'),
       signature: request.header('x-user-signature'),
+      context: this.requestContext(request),
     });
 
     try {
@@ -41,5 +43,17 @@ export class GatewayAuthGuard implements CanActivate {
     } catch {
       throw new UnauthorizedException('Thông tin định danh không hợp lệ');
     }
+  }
+
+  private requestContext(request: AuthenticatedRequest): string | undefined {
+    if (request.method !== 'POST' || !request.path.endsWith('/create-qr')) {
+      return undefined;
+    }
+    const body: unknown = request.body;
+    const record =
+      body !== null && typeof body === 'object' && !Array.isArray(body)
+        ? (body as Record<string, unknown>)
+        : {};
+    return createQrRequestContext(record.orderId, record.amount);
   }
 }
