@@ -139,7 +139,7 @@ Các cột chính:
 | `destination_account`     | Tài khoản đích đã dùng để tạo QR                                             |
 | `provider_transaction_id` | ID giao dịch Casso sau khi thành công                                        |
 | `provider_metadata`       | Metadata Casso đã giới hạn, không lưu toàn bộ payload tùy tiện               |
-| `review_reason`           | Lý do cần đối soát thủ công                                                  |
+| `review_reason`           | Dự phòng cho quy trình quản trị có audit; webhook mismatch không ghi cột này |
 | `expires_at`              | Thời hạn intent                                                              |
 | `paid_at`                 | Thời điểm ngân hàng ghi nhận giao dịch                                       |
 
@@ -177,13 +177,13 @@ stateDiagram-v2
     [*] --> PENDING: tạo intent
     PENDING --> SUCCESS: giao dịch hợp lệ
     PENDING --> EXPIRED: quá expires_at
-    PENDING --> REVIEW_REQUIRED: sai amount/account hoặc dữ liệu đáng ngờ
     PENDING --> FAILED: provider xác nhận thất bại
     SUCCESS --> REFUNDED: luồng hoàn tiền tương lai
 ```
 
-`REFUNDED` hiện mới được dự phòng trong schema; chưa có API hoàn tiền. Không tự
-đổi trạng thái trực tiếp bằng SQL nếu chưa có quy trình đối soát và audit.
+`REVIEW_REQUIRED` và `REFUNDED` hiện được dự phòng trong schema cho quy trình
+quản trị có audit; webhook không tự chuyển payment sang hai trạng thái này. Không
+tự đổi trạng thái trực tiếp bằng SQL nếu chưa có quy trình đối soát và audit.
 
 ## 7. Luồng tạo VietQR
 
@@ -331,8 +331,11 @@ Với mỗi transaction:
 10. Chuyển receipt sang `PROCESSED`.
 11. Commit transaction.
 
-Sai amount/account/status/expiry được chuyển `REVIEW_REQUIRED`, không phát event
-thành công.
+Sai amount/account/status/expiry chỉ chuyển **webhook receipt** sang
+`REVIEW_REQUIRED`, không phát event thành công và không làm hỏng trạng thái của
+intent. Vì vậy một giao dịch đúng đến sau vẫn có thể khóa cùng payment và chuyển
+nó từ `PENDING` sang `SUCCESS`; expiry worker sẽ tự chuyển intent quá hạn sang
+`EXPIRED`.
 
 Webhook response luôn có dạng dễ đọc cho Casso strict mode:
 
@@ -635,8 +638,10 @@ Script xác nhận:
 - `GET /health`: process đang sống.
 - `GET /health/ready`: PostgreSQL query được và RabbitMQ đã kết nối.
 
-Compose dùng liveness để tránh restart chỉ vì dependency chập chờn; load
-balancer nên dùng readiness để ngừng gửi traffic tới instance chưa sẵn sàng.
+Compose dùng `/health/ready` để chỉ đánh dấu container healthy khi PostgreSQL và
+RabbitMQ đều sẵn sàng. Liveness `/health` vẫn phù hợp cho cơ chế restart tiến
+trình; ingress/load balancer nên dùng readiness để ngừng gửi traffic tới instance
+chưa sẵn sàng.
 
 ### 16.2 Request ID
 
@@ -654,13 +659,20 @@ GROUP BY status
 ORDER BY status;
 ```
 
-Payment cần review:
+Webhook receipt cần review:
 
 ```sql
-SELECT id, order_id, amount, review_reason, created_at
-FROM payments
-WHERE status = 'REVIEW_REQUIRED'
-ORDER BY created_at DESC;
+SELECT wr.provider_event_id,
+       wr.payment_id,
+       wr.failure_reason,
+       wr.received_at,
+       p.order_id,
+       p.amount,
+       p.status AS payment_status
+FROM webhook_receipts wr
+LEFT JOIN payments p ON p.id = wr.payment_id
+WHERE wr.status = 'REVIEW_REQUIRED'
+ORDER BY wr.received_at DESC;
 ```
 
 Outbox bị kẹt:
@@ -700,7 +712,7 @@ Cần chú ý:
 | Không tạo được QR                     | Gateway log, Order method/status, signature | Xác nhận Order là VIETQR, chưa PAID và secret hai phía giống nhau |
 | HTTP 401 từ Payment                   | Timestamp, request ID, body-bound context   | Đồng bộ clock, secret và deploy Gateway/Payment cùng phiên bản    |
 | Webhook 403                           | Header Casso, secret, canonical payload     | Kiểm tra Webhook V2 secret và proxy có giữ JSON đúng cấu trúc     |
-| Webhook trả review                    | `review_reason`, account, amount, expiry    | Đối soát sao kê; không tự chuyển SUCCESS                          |
+| Webhook trả review                    | receipt `failure_reason`, account, amount   | Đối soát sao kê; intent vẫn nhận được giao dịch đúng đến sau      |
 | Payment SUCCESS nhưng Order chưa PAID | Outbox, queue, Canteen consumer/DLQ         | Khôi phục consumer; event sẽ retry hoặc republish theo quy trình  |
 | Queue tăng liên tục                   | Số consumer và log Canteen                  | Khởi động Canteen, kiểm Mongo và poison event                     |
 | Outbox chưa publish                   | Rabbit readiness, `last_error`              | Khôi phục RabbitMQ; publisher tự retry                            |
@@ -711,16 +723,18 @@ Không xóa receipt để “cho chạy lại” giao dịch thật khi chưa hi
 Nếu cần replay event sang Canteen, ưu tiên tạo công cụ replay có audit thay vì
 sửa `published_at` thủ công.
 
-## 18. Đối soát `REVIEW_REQUIRED`
+## 18. Đối soát receipt `REVIEW_REQUIRED`
 
 Quy trình đề nghị:
 
 1. Lấy payment, receipt và sao kê provider theo transaction ID.
 2. Xác nhận Order, owner, account nhận, amount và thời điểm.
-3. Nếu tiền không thuộc Order, giữ review và hoàn tiền theo quy trình ngoài hệ
-   thống.
-4. Nếu xác nhận hợp lệ, dùng một lệnh quản trị có audit để chuyển trạng thái và
-   tạo outbox trong **cùng transaction**.
+3. Nếu tiền không thuộc Order, giữ receipt để audit và hoàn tiền theo quy trình
+   ngoài hệ thống. Không đổi payment `PENDING` sang trạng thái review vì việc đó
+   sẽ chặn một giao dịch đúng đến sau.
+4. Nếu một giao dịch đúng đến sau, webhook tự xử lý payment bình thường. Nếu cần
+   chấp nhận thủ công chính giao dịch lệch, dùng một lệnh quản trị có audit để
+   cập nhật payment và tạo outbox trong **cùng transaction**.
 5. Ghi người xử lý, lý do, bằng chứng và thời điểm.
 
 Repo hiện chưa có admin API cho bước 4. Không thêm endpoint chuyển `SUCCESS`
@@ -812,7 +826,7 @@ Không chỉ cập nhật cột `status='REFUNDED'`.
 ## 23. Giới hạn hiện tại
 
 - Chưa có API refund.
-- Chưa có admin UI/API xử lý `REVIEW_REQUIRED`.
+- Chưa có admin UI/API xử lý receipt `REVIEW_REQUIRED`.
 - Chưa có job archive outbox/receipt.
 - Chưa có metrics Prometheus riêng; hiện dùng health, structured log, SQL và
   RabbitMQ diagnostics.

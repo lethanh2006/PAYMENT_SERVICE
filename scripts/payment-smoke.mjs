@@ -46,6 +46,39 @@ const paymentCode = String(created.transferContent ?? '')
   .at(-1);
 assert(paymentCode, 'Không lấy được payment code từ transferContent');
 
+const mismatchWebhook = {
+  error: 0,
+  data: {
+    id: `smoke-mismatch-${randomUUID()}`,
+    reference: `SMOKE-MISMATCH-${randomUUID()}`,
+    description: `SMOKE PREFIX ${paymentCode} SMOKE SUFFIX`,
+    amount: amount + 1,
+    accountNumber: destinationAccount,
+    transactionDateTime: new Date().toISOString(),
+    bankAbbreviation: 'SMOKE',
+  },
+};
+const mismatchResponse = await fetch(`${baseUrl}/api/payment/webhooks/casso`, {
+  method: 'POST',
+  headers: cassoHeaders(mismatchWebhook),
+  body: JSON.stringify(mismatchWebhook),
+});
+const mismatchResult = await json(mismatchResponse);
+assert(
+  mismatchResponse.ok && mismatchResult.reviewRequired === 1,
+  `Webhook sai tiền phải chờ đối soát: ${JSON.stringify(mismatchResult)}`,
+);
+
+const pendingResponse = await fetch(
+  `${baseUrl}/api/payment/payments/${created.paymentId}`,
+  { headers: gatewayHeaders('smoke-after-mismatch') },
+);
+const pending = await json(pendingResponse);
+assert(
+  pendingResponse.ok && pending.status === 'PENDING',
+  `Webhook sai tiền không được khóa intent: ${JSON.stringify(pending)}`,
+);
+
 const webhook = {
   error: 0,
   data: {
@@ -58,14 +91,7 @@ const webhook = {
     bankAbbreviation: 'SMOKE',
   },
 };
-const timestamp = Date.now().toString();
-const cassoSignature = createHmac('sha512', cassoSecret)
-  .update(`${timestamp}.${JSON.stringify(sortValue(webhook))}`)
-  .digest('hex');
-const webhookHeaders = {
-  'content-type': 'application/json',
-  'x-casso-signature': `t=${timestamp},v1=${cassoSignature}`,
-};
+const webhookHeaders = cassoHeaders(webhook);
 const webhookResponses = await Promise.all([
   fetch(`${baseUrl}/api/payment/webhooks/casso`, {
     method: 'POST',
@@ -109,6 +135,10 @@ console.log(
       orderId,
       paymentId: created.paymentId,
       tamperedRequestStatus: tamperedResponse.status,
+      mismatch: {
+        reviewRequired: mismatchResult.reviewRequired,
+        paymentStatus: pending.status,
+      },
       webhook: { processed, duplicate },
       finalStatus: status.status,
     },
@@ -130,6 +160,17 @@ function gatewayHeaders(requestId, context) {
     'x-user-signature': createHmac('sha256', internalSecret)
       .update(message)
       .digest('hex'),
+  };
+}
+
+function cassoHeaders(payload) {
+  const timestamp = Date.now().toString();
+  const signature = createHmac('sha512', cassoSecret)
+    .update(`${timestamp}.${JSON.stringify(sortValue(payload))}`)
+    .digest('hex');
+  return {
+    'content-type': 'application/json',
+    'x-casso-signature': `t=${timestamp},v1=${signature}`,
   };
 }
 

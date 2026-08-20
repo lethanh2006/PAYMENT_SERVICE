@@ -180,11 +180,6 @@ export class PaymentRepository {
 
       const validationError = this.validateTransaction(payment, input);
       if (validationError) {
-        if (payment.status === PaymentStatus.PENDING) {
-          payment.status = PaymentStatus.REVIEW_REQUIRED;
-          payment.reviewReason = validationError;
-          await manager.save(payment);
-        }
         await this.finishReceipt(
           manager,
           receiptId,
