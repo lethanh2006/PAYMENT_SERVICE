@@ -17,6 +17,7 @@
     "migration:revert": "npm run build && typeorm migration:revert -d dist/modules/database/data-source.js",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
+    "test:smoke": "node scripts/payment-smoke.mjs",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand"
