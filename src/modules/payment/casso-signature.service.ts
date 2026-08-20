@@ -45,6 +45,9 @@ export class CassoSignatureService {
     const currentSecret =
       this.readConfig('CASSO_WEBHOOK_SECRET') ?? this.readConfig('WEBHOOK_KEY');
     const previousSecret = this.readConfig('CASSO_WEBHOOK_PREVIOUS_SECRET');
+    if (!currentSecret) {
+      throw new Error('Thiếu cấu hình CASSO_WEBHOOK_SECRET');
+    }
 
     this.secrets = [...new Set([currentSecret, previousSecret].filter(isText))];
     this.configuredMaxAgeMs = this.readMaxAge();

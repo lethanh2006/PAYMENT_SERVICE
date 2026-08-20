@@ -109,12 +109,9 @@ describe('CassoSignatureService', () => {
     expect(verifier.verify(header, payload)).toBe(true);
   });
 
-  it('fails closed when no webhook secret is configured', () => {
-    const timestamp = Date.now().toString();
-    const header = `t=${timestamp},v1=${signature(CURRENT_SECRET, timestamp, payload)}`;
-
-    expect(new CassoSignatureService(config({})).verify(header, payload)).toBe(
-      false,
+  it('dừng khởi động khi không có webhook secret', () => {
+    expect(() => new CassoSignatureService(config({}))).toThrow(
+      'Thiếu cấu hình CASSO_WEBHOOK_SECRET',
     );
   });
 });
