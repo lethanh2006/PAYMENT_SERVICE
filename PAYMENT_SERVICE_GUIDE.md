@@ -612,7 +612,12 @@ cd backend/canteen && npm test -- --runInBand
 ### 15.2 Smoke test thật
 
 Smoke test tạo dữ liệu thật trong database được trỏ tới. Chỉ chạy trên local,
-staging hoặc database test.
+staging hoặc database test. Mặc định script sinh `orderId` ngẫu nhiên; nếu
+Canteen consumer đang chạy, event thử nghiệm không tìm thấy Order tương ứng sẽ
+được retry rồi chuyển vào `canteen.payment.succeeded.v1.dlq`. Có thể dừng
+Canteen khi chỉ test Payment, hoặc đặt `PAYMENT_SMOKE_ORDER_ID` và
+`PAYMENT_SMOKE_USER_ID` trùng một Order test thật để kiểm tra cả consumer. Dọn
+payment/receipt/outbox và message DLQ thử nghiệm sau khi kiểm tra xong.
 
 ```bash
 cd backend/payment
