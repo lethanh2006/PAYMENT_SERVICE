@@ -827,6 +827,11 @@ Không chỉ cập nhật cột `status='REFUNDED'`.
 - User đã bỏ Redis side-effect, JWT/bcrypt helper và dependency không dùng.
 - Các repo Node không còn track `dist` sinh tự động.
 - Logger không còn dependency `morgan` không dùng và không track file log runtime.
+- Canteen lấy cả giá món và giá option từ MenuItem trong database, đối soát lại
+  bàn sau mọi thứ tự `COMPLETED`/`PAID`, và chỉ ack retry RabbitMQ sau publisher
+  confirm.
+- Production dependency của toàn bộ service đã được audit và cập nhật về 0
+  advisory tại thời điểm hoàn tất tài liệu này.
 
 ## 23. Giới hạn hiện tại
 
@@ -840,19 +845,24 @@ Không chỉ cập nhật cột `status='REFUNDED'`.
 - Canteen consumer idempotent theo `paymentId`, nhưng chưa có bảng inbox event
   riêng nếu sau này cần audit mọi delivery.
 
-## 24. Các commit Payment chính
+## 24. Chuỗi commit trước bản tài liệu hiện tại
 
 ```text
-Khởi tạo cấu hình Payment Service
-Thêm PostgreSQL và migration thanh toán
-Thêm xác thực nội bộ và tạo VietQR
-Xử lý webhook Casso và nghiệp vụ thanh toán
-Phát sự kiện thanh toán qua outbox RabbitMQ
-Hoàn thiện API health và tài liệu Payment
-Ràng buộc số tiền vào chữ ký Gateway
-Tự động hết hạn payment đang chờ
-Bắt buộc cấu hình bí mật webhook Casso
-Thêm smoke test luồng thanh toán thực tế
+5c4e330 Khởi tạo cấu hình Payment Service
+94ea3b2 Thêm PostgreSQL và migration thanh toán
+262a0ed Thêm xác thực nội bộ và tạo VietQR
+e56a31e Xử lý webhook Casso và nghiệp vụ thanh toán
+2939518 Phát sự kiện thanh toán qua outbox RabbitMQ
+4411c9f Hoàn thiện API health và tài liệu Payment
+a63a119 Ràng buộc số tiền vào chữ ký Gateway
+f5976d6 Tự động hết hạn payment đang chờ
+f32d9d1 Bắt buộc cấu hình bí mật webhook Casso
+aa48a43 Thêm smoke test luồng thanh toán thực tế
+d367f26 Viết hướng dẫn vận hành Payment chi tiết
+035afcb Cho phép kiểm tra migration trong image runtime
+51529ca Ràng buộc chủ đơn khi tạo thanh toán
+1f3f2a5 Giữ intent sau giao dịch cần đối soát
+dd490d5 Ghi chú dữ liệu phát sinh khi chạy smoke test
 ```
 
 ## 25. Tài liệu nhà cung cấp
