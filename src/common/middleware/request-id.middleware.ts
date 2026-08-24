@@ -1,5 +1,6 @@
 import { Injectable, type NestMiddleware } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { runWithLogContext } from '@nrapp/observability';
 import type { NextFunction, Response } from 'express';
 import type { AuthenticatedRequest } from '../interfaces/authenticated-user.interface';
 
@@ -18,6 +19,6 @@ export class RequestIdMiddleware implements NestMiddleware {
 
     request.requestId = requestId;
     response.setHeader('x-request-id', requestId);
-    next();
+    runWithLogContext({ request_id: requestId }, () => next());
   }
 }
