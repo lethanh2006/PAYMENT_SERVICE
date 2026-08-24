@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { injectTraceHeaders } from '@nrapp/observability';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
 import { userIdOf } from '../../common/interfaces/authenticated-user.interface';
@@ -189,6 +190,7 @@ export class PaymentService {
     }
 
     const signatureTimestamp = this.signatureTimestamp(signatureHeader);
+    const traceHeaders = injectTraceHeaders();
 
     const results: CassoProcessingResult[] = [];
     for (const transaction of transactions) {
@@ -206,6 +208,8 @@ export class PaymentService {
           paidAt: parsed.paidAt,
           providerValidationError: parsed.providerValidationError,
           requestId: requestId ?? null,
+          traceparent: headerText(traceHeaders.traceparent),
+          tracestate: headerText(traceHeaders.tracestate),
         }),
       );
     }
@@ -420,4 +424,8 @@ export class PaymentService {
       createdAt: payment.createdAt.toISOString(),
     };
   }
+}
+
+function headerText(value: unknown): string | null {
+  return typeof value === 'string' && value.length <= 512 ? value : null;
 }

@@ -27,6 +27,12 @@ export class OutboxEventEntity {
   @Column({ name: 'request_id', type: 'varchar', length: 128, nullable: true })
   requestId: string | null;
 
+  @Column({ name: 'traceparent', type: 'varchar', length: 512, nullable: true })
+  traceparent: string | null;
+
+  @Column({ name: 'tracestate', type: 'varchar', length: 512, nullable: true })
+  tracestate: string | null;
+
   @Column({ name: 'attempt_count', type: 'integer', default: 0 })
   attemptCount: number;
 
@@ -38,6 +44,9 @@ export class OutboxEventEntity {
 
   @Column({ name: 'published_at', type: 'timestamptz', nullable: true })
   publishedAt: Date | null;
+
+  @Column({ name: 'failed_at', type: 'timestamptz', nullable: true })
+  failedAt: Date | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

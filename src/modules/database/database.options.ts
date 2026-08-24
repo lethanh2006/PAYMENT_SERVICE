@@ -4,6 +4,7 @@ import { OutboxEventEntity } from './entities/outbox-event.entity';
 import { PaymentEntity } from './entities/payment.entity';
 import { WebhookReceiptEntity } from './entities/webhook-receipt.entity';
 import { InitialPaymentSchema1724000000000 } from './migrations/1724000000000-initial-payment-schema';
+import { AddOutboxObservability1724000001000 } from './migrations/1724000001000-add-outbox-observability';
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value ?? fallback);
@@ -33,7 +34,10 @@ export function paymentDatabaseOptions(): TypeOrmModuleOptions &
     password: requiredEnvironment('PAYMENT_DB_PASSWORD'),
     database: requiredEnvironment('PAYMENT_DB_NAME'),
     entities: [PaymentEntity, WebhookReceiptEntity, OutboxEventEntity],
-    migrations: [InitialPaymentSchema1724000000000],
+    migrations: [
+      InitialPaymentSchema1724000000000,
+      AddOutboxObservability1724000001000,
+    ],
     migrationsRun:
       process.env.PAYMENT_DB_RUN_MIGRATIONS?.toLowerCase() !== 'false',
     migrationsTableName: 'payment_migrations',
