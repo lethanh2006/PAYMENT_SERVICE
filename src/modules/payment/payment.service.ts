@@ -15,7 +15,10 @@ import {
   PaymentStatus,
 } from '../database/entities/payment.entity';
 import type { CreatePaymentQrDto } from './dto/create-payment-qr.dto';
-import { CassoSignatureService } from './casso-signature.service';
+import {
+  CassoSignatureService,
+  sortCassoPayload,
+} from './casso-signature.service';
 import {
   PaymentRepository,
   type CassoProcessingResult,
@@ -166,7 +169,6 @@ export class PaymentService {
 
   async handleCassoWebhook(
     payload: unknown,
-    rawBody: Buffer | undefined,
     signatureHeader: string | undefined,
     requestId: string | undefined,
   ): Promise<CassoProcessingResult[]> {
@@ -186,9 +188,6 @@ export class PaymentService {
       throw new BadRequestException('Số lượng giao dịch webhook không hợp lệ');
     }
 
-    const payloadHash = createHash('sha256')
-      .update(rawBody ?? Buffer.from(JSON.stringify(payload)))
-      .digest('hex');
     const signatureTimestamp = this.signatureTimestamp(signatureHeader);
 
     const results: CassoProcessingResult[] = [];
@@ -201,10 +200,11 @@ export class PaymentService {
           amount: parsed.amount,
           destinationAccount: parsed.accountNumber,
           providerReference: parsed.providerReference,
-          payloadHash,
+          payloadHash: this.hashTransaction(transaction),
           signatureTimestamp,
           metadata: parsed.metadata,
           paidAt: parsed.paidAt,
+          providerValidationError: parsed.providerValidationError,
           requestId: requestId ?? null,
         }),
       );
@@ -229,7 +229,8 @@ export class PaymentService {
     amount: number;
     accountNumber: string;
     providerReference: string | null;
-    paidAt: Date;
+    paidAt: Date | null;
+    providerValidationError: string | null;
     metadata: Record<string, unknown>;
   } {
     if (!value || typeof value !== 'object') {
@@ -259,8 +260,9 @@ export class PaymentService {
         : null;
     const transactionDateTime =
       typeof transaction.transactionDateTime === 'string'
-        ? transaction.transactionDateTime
+        ? transaction.transactionDateTime.trim()
         : null;
+    const paidAt = this.parseTransactionDate(transactionDateTime);
 
     return {
       providerEventId,
@@ -268,9 +270,14 @@ export class PaymentService {
       amount: transaction.amount,
       accountNumber,
       providerReference,
-      paidAt: this.parseTransactionDate(transactionDateTime),
+      paidAt,
+      providerValidationError: paidAt
+        ? null
+        : 'Thời gian giao dịch Casso không hợp lệ',
       metadata: {
-        ...(transactionDateTime ? { transactionDateTime } : {}),
+        ...(transactionDateTime
+          ? { transactionDateTime: transactionDateTime.slice(0, 64) }
+          : {}),
         ...(typeof transaction.bankAbbreviation === 'string'
           ? { bankAbbreviation: transaction.bankAbbreviation.slice(0, 20) }
           : {}),
@@ -306,16 +313,58 @@ export class PaymentService {
     return header?.match(/(?:^|,)\s*t=(\d+)/)?.[1] ?? null;
   }
 
-  private parseTransactionDate(value: string | null): Date {
-    if (!value) {
-      return new Date();
+  private hashTransaction(transaction: unknown): string {
+    let canonicalTransaction: string | undefined;
+    try {
+      canonicalTransaction = JSON.stringify(sortCassoPayload(transaction));
+    } catch {
+      throw new BadRequestException('Không thể chuẩn hóa giao dịch Casso');
     }
-    const isoLike = value.includes('T') ? value : value.replace(' ', 'T');
+    if (canonicalTransaction === undefined) {
+      throw new BadRequestException('Không thể chuẩn hóa giao dịch Casso');
+    }
+    return createHash('sha256')
+      .update(canonicalTransaction, 'utf8')
+      .digest('hex');
+  }
+
+  private parseTransactionDate(value: string | null): Date | null {
+    if (!value) {
+      return null;
+    }
+
+    const match = value.match(
+      /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-]\d{2}:?\d{2})?$/,
+    );
+    if (!match) {
+      return null;
+    }
+    const [, yearText, monthText, dayText, hourText, minuteText, secondText] =
+      match;
+    const year = Number(yearText);
+    const month = Number(monthText);
+    const day = Number(dayText);
+    const hour = Number(hourText);
+    const minute = Number(minuteText);
+    const second = Number(secondText);
+    const calendarDate = new Date(Date.UTC(year, month - 1, day));
+    if (
+      calendarDate.getUTCFullYear() !== year ||
+      calendarDate.getUTCMonth() !== month - 1 ||
+      calendarDate.getUTCDate() !== day ||
+      hour > 23 ||
+      minute > 59 ||
+      second > 59
+    ) {
+      return null;
+    }
+
+    const isoLike = value.replace(' ', 'T');
     const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(isoLike);
     const parsed = new Date(
       hasTimezone ? isoLike : `${isoLike}${this.cassoTimezoneOffset}`,
     );
-    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
 
   private requireUserId(user: AuthenticatedUser | undefined): string {

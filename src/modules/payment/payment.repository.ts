@@ -20,7 +20,8 @@ export interface CassoTransactionInput {
   payloadHash: string;
   signatureTimestamp: string | null;
   metadata: Record<string, unknown>;
-  paidAt: Date;
+  paidAt: Date | null;
+  providerValidationError: string | null;
   requestId: string | null;
 }
 
@@ -178,7 +179,7 @@ export class PaymentRepository {
         };
       }
 
-      const validationError = this.validateTransaction(payment, input);
+      const validationError = validateCassoTransaction(payment, input);
       if (validationError) {
         await this.finishReceipt(
           manager,
@@ -194,12 +195,17 @@ export class PaymentRepository {
         };
       }
 
+      const paidAt = input.paidAt;
+      if (!paidAt) {
+        throw new Error('Thiếu thời gian giao dịch sau bước kiểm tra provider');
+      }
+
       payment.status = PaymentStatus.SUCCESS;
       payment.providerTransactionId = input.providerEventId;
       payment.providerReference = input.providerReference;
       payment.providerMetadata = input.metadata;
       payment.reviewReason = null;
-      payment.paidAt = input.paidAt;
+      payment.paidAt = paidAt;
       await manager.save(payment);
 
       const eventId = randomUUID();
@@ -227,7 +233,7 @@ export class PaymentRepository {
             currency: payment.currency,
             paymentMethod: payment.paymentMethod,
             providerTransactionId: input.providerEventId,
-            paidAt: input.paidAt.toISOString(),
+            paidAt: paidAt.toISOString(),
           },
         },
       });
@@ -244,31 +250,6 @@ export class PaymentRepository {
     });
   }
 
-  private validateTransaction(
-    payment: PaymentEntity,
-    input: CassoTransactionInput,
-  ): string | null {
-    if (payment.status === PaymentStatus.SUCCESS) {
-      return 'Thanh toán đã thành công bằng một giao dịch khác';
-    }
-    if (payment.status !== PaymentStatus.PENDING) {
-      return `Thanh toán đang ở trạng thái ${payment.status}`;
-    }
-    if (payment.expiresAt.getTime() <= Date.now()) {
-      return 'Thanh toán đã hết hạn';
-    }
-    if (payment.amount !== input.amount) {
-      return `Số tiền thực nhận ${input.amount} không khớp số tiền đơn hàng`;
-    }
-    if (
-      normalizeAccount(payment.destinationAccount) !==
-      normalizeAccount(input.destinationAccount)
-    ) {
-      return 'Giao dịch không thuộc tài khoản nhận tiền đã cấu hình';
-    }
-    return null;
-  }
-
   private async finishReceipt(
     manager: EntityManager,
     receiptId: string,
@@ -283,6 +264,34 @@ export class PaymentRepository {
       processedAt: new Date(),
     });
   }
+}
+
+export function validateCassoTransaction(
+  payment: PaymentEntity,
+  input: CassoTransactionInput,
+): string | null {
+  if (input.providerValidationError) {
+    return input.providerValidationError;
+  }
+  if (payment.status === PaymentStatus.SUCCESS) {
+    return 'Thanh toán đã thành công bằng một giao dịch khác';
+  }
+  if (payment.status !== PaymentStatus.PENDING) {
+    return `Thanh toán đang ở trạng thái ${payment.status}`;
+  }
+  if (payment.expiresAt.getTime() <= Date.now()) {
+    return 'Thanh toán đã hết hạn';
+  }
+  if (payment.amount !== input.amount) {
+    return `Số tiền thực nhận ${input.amount} không khớp số tiền đơn hàng`;
+  }
+  if (
+    normalizeAccount(payment.destinationAccount) !==
+    normalizeAccount(input.destinationAccount)
+  ) {
+    return 'Giao dịch không thuộc tài khoản nhận tiền đã cấu hình';
+  }
+  return null;
 }
 
 function normalizeAccount(value: string): string {

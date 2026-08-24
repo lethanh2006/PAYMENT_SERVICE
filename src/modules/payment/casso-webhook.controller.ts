@@ -1,13 +1,4 @@
-import {
-  Body,
-  Controller,
-  Headers,
-  HttpCode,
-  Post,
-  RawBodyRequest,
-  Req,
-} from '@nestjs/common';
-import type { Request } from 'express';
+import { Body, Controller, Headers, HttpCode, Post, Req } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../../common/interfaces/authenticated-user.interface';
 import { PaymentService } from './payment.service';
 
@@ -20,11 +11,10 @@ export class CassoWebhookController {
   async handle(
     @Body() payload: unknown,
     @Headers('x-casso-signature') signature: string | undefined,
-    @Req() request: RawBodyRequest<Request> & AuthenticatedRequest,
+    @Req() request: AuthenticatedRequest,
   ) {
     const results = await this.paymentService.handleCassoWebhook(
       payload,
-      request.rawBody,
       signature,
       request.requestId,
     );
