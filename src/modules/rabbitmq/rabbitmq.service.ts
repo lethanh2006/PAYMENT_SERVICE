@@ -64,14 +64,15 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
     }
+    const channel = this.channel;
+    const connection = this.connection;
+    this.channel = null;
+    this.connection = null;
     try {
-      await this.channel?.close();
-      await this.connection?.close();
+      await channel?.close();
+      await connection?.close();
     } catch (error: unknown) {
       this.logger.warn(`Không đóng được RabbitMQ: ${toMessage(error)}`);
-    } finally {
-      this.channel = null;
-      this.connection = null;
     }
   }
 
@@ -112,19 +113,72 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
     });
     const channel = await connection.createConfirmChannel();
     connection.on('error', (error) => {
-      this.logger.warn(`Kết nối RabbitMQ lỗi: ${toMessage(error)}`);
+      this.handleTransportUnavailable(
+        connection,
+        channel,
+        `Kết nối RabbitMQ lỗi: ${toMessage(error)}`,
+        true,
+      );
     });
     connection.on('close', () => {
-      this.connection = null;
-      this.channel = null;
-      if (!this.shuttingDown) {
-        this.logger.warn('Kết nối RabbitMQ đã đóng, sẽ kết nối lại');
-        this.scheduleReconnect();
-      }
+      this.handleTransportUnavailable(
+        connection,
+        channel,
+        'Kết nối RabbitMQ đã đóng, sẽ kết nối lại',
+        false,
+      );
+    });
+    channel.on('error', (error) => {
+      this.handleTransportUnavailable(
+        connection,
+        channel,
+        `Kênh RabbitMQ lỗi: ${toMessage(error)}`,
+        true,
+      );
+    });
+    channel.on('close', () => {
+      this.handleTransportUnavailable(
+        connection,
+        channel,
+        'Kênh RabbitMQ đã đóng, sẽ kết nối lại',
+        true,
+      );
     });
     this.connection = connection;
     this.channel = channel;
     this.logger.log('Payment Service đã kết nối RabbitMQ');
+  }
+
+  private handleTransportUnavailable(
+    connection: amqp.ChannelModel,
+    channel: amqp.ConfirmChannel,
+    message: string,
+    closeConnection: boolean,
+  ): void {
+    const ownsConnection = this.connection === connection;
+    const ownsChannel = this.channel === channel;
+    if (!ownsConnection && !ownsChannel) {
+      return;
+    }
+    if (ownsConnection) {
+      this.connection = null;
+    }
+    if (ownsChannel) {
+      this.channel = null;
+    }
+    if (this.shuttingDown) {
+      return;
+    }
+
+    this.logger.warn(message);
+    if (closeConnection) {
+      void connection.close().catch((error: unknown) => {
+        this.logger.warn(
+          `Không đóng được kết nối RabbitMQ lỗi: ${toMessage(error)}`,
+        );
+      });
+    }
+    this.scheduleReconnect();
   }
 
   private scheduleReconnect(): void {
