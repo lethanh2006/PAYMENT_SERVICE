@@ -11,6 +11,7 @@ export interface AuthenticatedUser {
 export interface AuthenticatedRequest extends Request {
   user?: AuthenticatedUser;
   requestId?: string;
+  clientRequestId?: string;
 }
 
 export function userIdOf(user: AuthenticatedUser | undefined): string | null {

@@ -10,7 +10,10 @@ import { APP_FILTER } from '@nestjs/core';
 import { GlobalExceptionFilter } from '../common/filters/global-exception.filter';
 import { PublicRequestOutcomeMiddleware } from '../common/middleware/public-request-outcome.middleware';
 import { GatewayAuthGuard } from '../common/guards/gateway-auth.guard';
-import { RequestIdMiddleware } from '../common/middleware/request-id.middleware';
+import {
+  PublicRequestIdMiddleware,
+  RequestIdMiddleware,
+} from '../common/middleware/request-id.middleware';
 import { TelemetryLifecycleService } from '../common/observability/telemetry-lifecycle.service';
 import { GatewaySignatureService } from '../common/security/gateway-signature.service';
 
@@ -31,20 +34,18 @@ import { GatewaySignatureService } from '../common/security/gateway-signature.se
 })
 export class CoreModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(RequestIdMiddleware).forRoutes('*');
-    consumer.apply(PublicRequestOutcomeMiddleware).forRoutes(
-      {
-        path: 'webhook/casso',
-        method: RequestMethod.POST,
-      },
-      {
-        path: 'api/payment/webhooks/casso',
-        method: RequestMethod.POST,
-      },
-      {
-        path: 'api/payment/callback',
-        method: RequestMethod.POST,
-      },
-    );
+    const publicRoutes = [
+      { path: 'webhook/casso', method: RequestMethod.POST },
+      { path: 'api/payment/webhooks/casso', method: RequestMethod.POST },
+      { path: 'api/payment/callback', method: RequestMethod.POST },
+    ];
+
+    consumer
+      .apply(PublicRequestIdMiddleware, PublicRequestOutcomeMiddleware)
+      .forRoutes(...publicRoutes);
+    consumer
+      .apply(RequestIdMiddleware)
+      .exclude(...publicRoutes)
+      .forRoutes('*');
   }
 }
