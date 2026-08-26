@@ -117,6 +117,8 @@ describe('Payment webhook integrity v2', () => {
       paidAt: null,
       providerValidationError: 'Thời gian giao dịch Casso không hợp lệ',
       requestId: null,
+      traceparent: null,
+      tracestate: null,
     };
 
     expect(validateCassoTransaction({} as PaymentEntity, input)).toBe(
