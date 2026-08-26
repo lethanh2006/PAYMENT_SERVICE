@@ -1,21 +1,33 @@
-import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { RabbitMQService } from './modules/rabbitmq/rabbitmq.service';
+import { RabbitMQService } from '../rabbitmq/rabbitmq.service';
 
-@Controller()
-export class AppController {
+export interface PaymentLivenessHealth {
+  status: 'ok';
+  service: 'payment';
+}
+
+export interface PaymentReadinessHealth {
+  status: 'ready';
+  service: 'payment';
+  dependencies: {
+    postgresql: 'up';
+    rabbitmq: 'up';
+  };
+}
+
+@Injectable()
+export class HealthService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly rabbitMQService: RabbitMQService,
   ) {}
 
-  @Get('health')
-  getHealth() {
+  getLiveness(): PaymentLivenessHealth {
     return { status: 'ok', service: 'payment' };
   }
 
-  @Get('health/ready')
-  async getReadiness() {
+  async getReadiness(): Promise<PaymentReadinessHealth> {
     try {
       await this.dataSource.query('SELECT 1');
     } catch {
