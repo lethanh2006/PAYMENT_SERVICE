@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+  NODE_ENV: test
+  OBSERVABILITY_LOAD_DOTENV: "false"
+  OTEL_SDK_DISABLED: "true"
+  LOG_FORMAT: json
+
+jobs:
+  check:
+    name: Lint, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: service
+
+    steps:
+      - name: Checkout service
+        uses: actions/checkout@v7
+        with:
+          path: service
+          persist-credentials: false
+
+      # package.json depends on file:../logger/packages/observability.
+      - name: Checkout shared observability package
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ vars.LOGGER_REPOSITORY || 'lethanh2006/Logger' }}
+          # Pin the tested Logger revision; update LOGGER_REF to upgrade it.
+          ref: ${{ vars.LOGGER_REF || '108e1a5543a8182c3e00630fde73d2325a030dfd' }}
+          token: ${{ secrets.LOGGER_READ_TOKEN || github.token }}
+          path: logger
+          sparse-checkout: packages/observability
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            service/package-lock.json
+            logger/packages/observability/package-lock.json
+
+      - name: Install shared package dependencies
+        working-directory: logger/packages/observability
+        run: npm ci --no-audit --no-fund
+
+      - name: Install service dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test -- --ci --runInBand
+
+      - name: Build
+        run: npm run build
