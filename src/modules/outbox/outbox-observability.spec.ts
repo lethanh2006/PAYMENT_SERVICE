@@ -94,4 +94,44 @@ describe('OutboxPublisher observability', () => {
       'error.code': 'OUTBOX_PUBLISH_EXHAUSTED',
     });
   });
+
+  it('mặc định retry vô hạn và không đánh dấu failed_at', async () => {
+    const event = {
+      id: '5ad62f76-3ca1-46cb-ab36-9696b40e50d1',
+      aggregate_id: '4ca949f2-005b-4a1a-9168-6519f0a19777',
+      event_type: 'payment.succeeded.v1',
+      payload: { eventType: 'payment.succeeded.v1' },
+      request_id: null,
+      traceparent: null,
+      tracestate: null,
+      attempt_count: 99,
+    };
+    const queryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn().mockResolvedValue({ records: [event] }),
+      release: jest.fn().mockResolvedValue(undefined),
+    };
+    const updateQuery = jest.fn().mockResolvedValue(undefined);
+    const dataSource = {
+      createQueryRunner: jest.fn().mockReturnValue(queryRunner),
+      query: updateQuery,
+    } as unknown as DataSource;
+    const rabbitMQ = {
+      isReady: jest.fn().mockReturnValue(true),
+      publish: jest.fn().mockRejectedValue(new Error('broker unavailable')),
+    } as unknown as RabbitMQService;
+    const config = {
+      get: jest.fn().mockReturnValue(undefined),
+    } as unknown as ConfigService;
+    const warnSpy = jest.spyOn(appLogger, 'warn').mockImplementation();
+    const publisher = new OutboxPublisher(dataSource, rabbitMQ, config);
+
+    await publisher.flush();
+
+    expect(updateQuery).toHaveBeenCalledWith(
+      expect.stringContaining('failed_at = CASE WHEN $4'),
+      expect.arrayContaining([event.id, 'broker unavailable', false]),
+    );
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
 });

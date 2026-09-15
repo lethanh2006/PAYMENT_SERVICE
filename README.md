@@ -19,6 +19,10 @@ Xem [PAYMENT_SERVICE_GUIDE.md](./PAYMENT_SERVICE_GUIDE.md) để đọc tài li�
 7. Outbox phát `payment.succeeded.v1` tới queue
    `canteen.payment.succeeded.v1`; Canteen cập nhật `paymentStatus=PAID`.
 
+Outbox mặc định retry vô hạn với exponential backoff khi RabbitMQ gián đoạn.
+Chỉ đặt `PAYMENT_OUTBOX_MAX_ATTEMPTS` thành số dương nếu đã có quy trình cảnh
+báo và re-drive các row có `failed_at`.
+
 ## Chạy local
 
 Từ thư mục `backend`:

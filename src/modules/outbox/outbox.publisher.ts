@@ -42,12 +42,12 @@ export class OutboxPublisher implements OnModuleInit, OnModuleDestroy {
         ? configured
         : 1_000;
     const configuredMaxAttempts = Number(
-      configService.get<string>('PAYMENT_OUTBOX_MAX_ATTEMPTS') ?? 8,
+      configService.get<string>('PAYMENT_OUTBOX_MAX_ATTEMPTS') ?? 0,
     );
     this.maxAttempts =
-      Number.isSafeInteger(configuredMaxAttempts) && configuredMaxAttempts > 0
+      Number.isSafeInteger(configuredMaxAttempts) && configuredMaxAttempts >= 0
         ? configuredMaxAttempts
-        : 8;
+        : 0;
   }
 
   onModuleInit(): void {
@@ -158,7 +158,9 @@ export class OutboxPublisher implements OnModuleInit, OnModuleDestroy {
                 [event.id],
               );
             } catch (error: unknown) {
-              if (event.attempt_count < this.maxAttempts) {
+              const exhausted =
+                this.maxAttempts > 0 && event.attempt_count >= this.maxAttempts;
+              if (!exhausted) {
                 recordExceptionOnActiveSpan(error, {
                   code: 'OUTBOX_PUBLISH_RETRY',
                 });
@@ -183,7 +185,8 @@ export class OutboxPublisher implements OnModuleInit, OnModuleDestroy {
     event: ClaimedOutboxEvent,
     error: unknown,
   ): Promise<void> {
-    const exhausted = event.attempt_count >= this.maxAttempts;
+    const exhausted =
+      this.maxAttempts > 0 && event.attempt_count >= this.maxAttempts;
     const delaySeconds = Math.min(300, 2 ** Math.min(event.attempt_count, 8));
     await this.dataSource.query(
       `UPDATE outbox_events
@@ -204,7 +207,9 @@ export class OutboxPublisher implements OnModuleInit, OnModuleDestroy {
       'messaging.destination.name': 'canteen.payment.succeeded.v1',
       'messaging.message.id': event.id,
       'messaging.retry.count': event.attempt_count,
-      'messaging.retry.max': this.maxAttempts,
+      ...(this.maxAttempts > 0
+        ? { 'messaging.retry.max': this.maxAttempts }
+        : {}),
     };
     if (exhausted) {
       logAndRecordException(
