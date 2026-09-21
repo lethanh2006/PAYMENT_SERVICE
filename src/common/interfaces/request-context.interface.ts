@@ -13,8 +13,3 @@ export interface AuthenticatedRequest extends Request {
   requestId?: string;
   clientRequestId?: string;
 }
-
-export function userIdOf(user: AuthenticatedUser | undefined): string | null {
-  const value = user?._id ?? user?.id;
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}

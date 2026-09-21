@@ -1,7 +1,7 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { logAndRecordException, withMessageSpan } from '@nrapp/observability';
-import { appLogger } from '../../common/observability';
+import { logException } from '@nrapp/observability';
+import { appLogger } from '../../common/logging/logger';
 import { PaymentRepository } from './payment.repository';
 
 @Injectable()
@@ -42,46 +42,36 @@ export class PaymentExpiryWorker implements OnModuleInit, OnModuleDestroy {
     }
     this.running = true;
     try {
-      return await withMessageSpan(
-        'payment expiry sweep',
-        {},
-        async () => {
-          try {
-            const expired = await this.repository.expirePendingPayments();
-            if (expired > 0) {
-              appLogger.info(
-                {
-                  'event.name': 'payment.expiry.completed',
-                  'payment.expired.count': expired,
-                },
-                'Đã đánh dấu payment PENDING hết hạn',
-              );
-            }
-            return expired;
-          } catch (error: unknown) {
-            logAndRecordException(
-              appLogger,
-              'payment.expiry.failed',
-              error,
-              { 'job.name': 'payment-expiry' },
-              {
-                message: 'Không thể hết hạn payment',
-                classification: {
-                  statusCode: 500,
-                  code: 'PAYMENT_EXPIRY_FAILED',
-                  expected: false,
-                  retryable: true,
-                },
-              },
-            );
-            return 0;
-          }
-        },
-        {
-          kind: 0,
-          attributes: { 'job.name': 'payment-expiry' },
-        },
-      );
+      try {
+        const expired = await this.repository.expirePendingPayments();
+        if (expired > 0) {
+          appLogger.info(
+            {
+              'event.name': 'payment.expiry.completed',
+              'payment.expired.count': expired,
+            },
+            'Đã đánh dấu payment PENDING hết hạn',
+          );
+        }
+        return expired;
+      } catch (error: unknown) {
+        logException(
+          appLogger,
+          'payment.expiry.failed',
+          error,
+          { 'job.name': 'payment-expiry' },
+          {
+            message: 'Không thể hết hạn payment',
+            classification: {
+              statusCode: 500,
+              code: 'PAYMENT_EXPIRY_FAILED',
+              expected: false,
+              retryable: true,
+            },
+          },
+        );
+        return 0;
+      }
     } finally {
       this.running = false;
     }

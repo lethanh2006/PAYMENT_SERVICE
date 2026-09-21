@@ -1,14 +1,12 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
-  logAndRecordException,
-  recordExceptionOnActiveSpan,
+  logException,
   runWithLogContext,
   sanitizeText,
-  withMessageSpan,
 } from '@nrapp/observability';
 import { DataSource, type QueryResult } from 'typeorm';
-import { appLogger } from '../../common/observability';
+import { appLogger } from '../../common/logging/logger';
 import { RabbitMQService } from '../rabbitmq/rabbitmq.service';
 
 interface ClaimedOutboxEvent {
@@ -17,8 +15,6 @@ interface ClaimedOutboxEvent {
   event_type: string;
   payload: Record<string, unknown>;
   request_id: string | null;
-  traceparent: string | null;
-  tracestate: string | null;
   attempt_count: number;
 }
 
@@ -73,7 +69,7 @@ export class OutboxPublisher implements OnModuleInit, OnModuleDestroy {
         await this.publishOne(event);
       }
     } catch (error: unknown) {
-      logAndRecordException(
+      logException(
         appLogger,
         'payment.outbox.flush.failed',
         error,
@@ -115,8 +111,7 @@ export class OutboxPublisher implements OnModuleInit, OnModuleDestroy {
           FROM candidates
           WHERE event.id = candidates.id
           RETURNING event.id, event.aggregate_id, event.event_type,
-                    event.payload, event.request_id, event.traceparent,
-                    event.tracestate, event.attempt_count
+                    event.payload, event.request_id, event.attempt_count
         `,
         [],
         true,
@@ -130,54 +125,28 @@ export class OutboxPublisher implements OnModuleInit, OnModuleDestroy {
 
   private async publishOne(event: ClaimedOutboxEvent): Promise<void> {
     const queueName = 'canteen.payment.succeeded.v1';
-    const parentHeaders = {
-      ...(event.traceparent ? { traceparent: event.traceparent } : {}),
-      ...(event.tracestate ? { tracestate: event.tracestate } : {}),
-    };
-
     await runWithLogContext(
       {
         request_id: event.request_id ?? undefined,
         'messaging.message.id': event.id,
       },
-      () =>
-        withMessageSpan(
-          `${queueName} publish`,
-          parentHeaders,
-          async () => {
-            try {
-              await this.rabbitMQService.publish(queueName, event.payload, {
-                messageId: event.id,
-                correlationId: event.aggregate_id,
-                requestId: event.request_id,
-              });
-              await this.dataSource.query(
-                `UPDATE outbox_events
+      async () => {
+        try {
+          await this.rabbitMQService.publish(queueName, event.payload, {
+            messageId: event.id,
+            correlationId: event.aggregate_id,
+            requestId: event.request_id,
+          });
+          await this.dataSource.query(
+            `UPDATE outbox_events
                  SET published_at = now(), last_error = NULL
                  WHERE id = $1 AND published_at IS NULL AND failed_at IS NULL`,
-                [event.id],
-              );
-            } catch (error: unknown) {
-              const exhausted =
-                this.maxAttempts > 0 && event.attempt_count >= this.maxAttempts;
-              if (!exhausted) {
-                recordExceptionOnActiveSpan(error, {
-                  code: 'OUTBOX_PUBLISH_RETRY',
-                });
-              }
-              await this.recordPublishFailure(event, error);
-            }
-          },
-          {
-            kind: 3,
-            attributes: {
-              'messaging.system': 'rabbitmq',
-              'messaging.destination.name': queueName,
-              'messaging.operation.type': 'publish',
-              'messaging.message.id': event.id,
-            },
-          },
-        ),
+            [event.id],
+          );
+        } catch (error: unknown) {
+          await this.recordPublishFailure(event, error);
+        }
+      },
     );
   }
 
@@ -212,7 +181,7 @@ export class OutboxPublisher implements OnModuleInit, OnModuleDestroy {
         : {}),
     };
     if (exhausted) {
-      logAndRecordException(
+      logException(
         appLogger,
         'payment.outbox.publish.exhausted',
         error,

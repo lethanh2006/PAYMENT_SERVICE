@@ -4,8 +4,8 @@ Payment Service tạo VietQR cho đơn hàng Canteen, nhận Casso Webhook V2 v�
 toàn bộ trạng thái thanh toán trong PostgreSQL. Service không dùng MongoDB hoặc
 Redis.
 
-Xem [PAYMENT_SERVICE_GUIDE.md](./PAYMENT_SERVICE_GUIDE.md) để đọc tài liệu đầy
-đủ về kiến trúc, code, cấu hình, triển khai, kiểm thử và xử lý sự cố.
+Xem [COMMON.md](COMMON.md) để đọc luồng request, cấu trúc code dùng chung và
+trạng thái Payment trong cấu hình VPS.
 
 ## Luồng chính
 

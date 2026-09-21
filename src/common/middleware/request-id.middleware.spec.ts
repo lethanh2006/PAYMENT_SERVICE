@@ -1,12 +1,14 @@
-import { getLogContext } from '@nrapp/observability';
-import type { NextFunction, Response } from 'express';
-import type { AuthenticatedRequest } from './auth';
 import {
   CLIENT_REQUEST_ID_HEADER,
-  PublicRequestIdMiddleware,
+  getLogContext,
   REQUEST_ID_HEADER,
-  RequestIdMiddleware,
   SAFE_REQUEST_ID,
+} from '@nrapp/observability';
+import type { NextFunction, Response } from 'express';
+import type { AuthenticatedRequest } from '../interfaces/request-context.interface';
+import {
+  PublicRequestIdMiddleware,
+  RequestIdMiddleware,
 } from './request-id.middleware';
 
 describe('Payment request correlation contract', () => {

@@ -3,32 +3,16 @@ import {
   Catch,
   ExceptionFilter,
   Injectable,
-  UnprocessableEntityException,
 } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
 import {
   classifyException,
-  logAndRecordException,
+  logException,
   normalizeRouteTemplate,
 } from '@nrapp/observability';
-import type { Request, Response } from 'express';
-import type { ValidationError } from 'class-validator';
-import { appLogger } from './observability';
-
-interface RequestWithCorrelation extends Request {
-  requestId?: string;
-}
-
-export interface HttpOutcomeContext {
-  errorCode: string;
-  validationFields: string[];
-}
-
-interface ResponseWithOutcome extends Response {
-  locals: Response['locals'] & {
-    observabilityOutcome?: HttpOutcomeContext;
-  };
-}
+import type { AuthenticatedRequest } from '../interfaces/request-context.interface';
+import type { ResponseWithOutcome } from '../interfaces/http-outcome.interface';
+import { appLogger } from '../logging/logger';
 
 @Catch()
 @Injectable()
@@ -37,7 +21,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const http = host.switchToHttp();
-    const request = http.getRequest<RequestWithCorrelation>();
+    const request = http.getRequest<AuthenticatedRequest>();
     const response = http.getResponse<ResponseWithOutcome>();
     const classification = classifyException(exception);
 
@@ -48,7 +32,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     let errorId: string | undefined;
     if (!classification.expected) {
-      const result = logAndRecordException(
+      const result = logException(
         appLogger,
         'http.request.failed',
         exception,
@@ -81,7 +65,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   }
 }
 
-function routeTemplate(request: RequestWithCorrelation): string {
+function routeTemplate(request: AuthenticatedRequest): string {
   const route = (request.route as { path?: unknown } | undefined)?.path;
   const base = request.baseUrl ?? '';
   return normalizeRouteTemplate(
@@ -102,38 +86,4 @@ function expectedResponse(
       : {}),
     requestId,
   };
-}
-
-function collectFieldPaths(errors: ValidationError[], prefix = ''): string[] {
-  const fields: string[] = [];
-
-  for (const error of errors) {
-    const property = String(error.property ?? '').trim();
-    if (!property || !/^[A-Za-z0-9_[\]-]{1,100}$/.test(property)) {
-      continue;
-    }
-
-    const path = prefix ? `${prefix}.${property}` : property;
-    if (error.constraints && Object.keys(error.constraints).length > 0) {
-      fields.push(path);
-    }
-    if (error.children?.length) {
-      fields.push(...collectFieldPaths(error.children, path));
-    }
-  }
-
-  return fields;
-}
-
-export function createValidationException(
-  errors: ValidationError[],
-): UnprocessableEntityException {
-  const fields = [...new Set(collectFieldPaths(errors))].slice(0, 50);
-
-  return new UnprocessableEntityException({
-    statusCode: 422,
-    code: 'VALIDATION_ERROR',
-    message: 'Dữ liệu không hợp lệ',
-    details: { fields },
-  });
 }

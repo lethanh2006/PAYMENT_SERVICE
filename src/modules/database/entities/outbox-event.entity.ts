@@ -27,12 +27,6 @@ export class OutboxEventEntity {
   @Column({ name: 'request_id', type: 'varchar', length: 128, nullable: true })
   requestId: string | null;
 
-  @Column({ name: 'traceparent', type: 'varchar', length: 512, nullable: true })
-  traceparent: string | null;
-
-  @Column({ name: 'tracestate', type: 'varchar', length: 512, nullable: true })
-  tracestate: string | null;
-
   @Column({ name: 'attempt_count', type: 'integer', default: 0 })
   attemptCount: number;
 

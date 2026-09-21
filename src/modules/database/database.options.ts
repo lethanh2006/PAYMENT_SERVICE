@@ -5,6 +5,7 @@ import { PaymentEntity } from './entities/payment.entity';
 import { WebhookReceiptEntity } from './entities/webhook-receipt.entity';
 import { InitialPaymentSchema1724000000000 } from './migrations/1724000000000-initial-payment-schema';
 import { AddOutboxObservability1724000001000 } from './migrations/1724000001000-add-outbox-observability';
+import { RemoveOutboxTraceColumns1724000002000 } from './migrations/1724000002000-remove-outbox-trace-columns';
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value ?? fallback);
@@ -37,6 +38,7 @@ export function paymentDatabaseOptions(): TypeOrmModuleOptions &
     migrations: [
       InitialPaymentSchema1724000000000,
       AddOutboxObservability1724000001000,
+      RemoveOutboxTraceColumns1724000002000,
     ],
     migrationsRun:
       process.env.PAYMENT_DB_RUN_MIGRATIONS?.toLowerCase() !== 'false',

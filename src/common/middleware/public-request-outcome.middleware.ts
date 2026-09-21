@@ -3,21 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import {
   classifyException,
   normalizeRouteTemplate,
-  recordHttpRejection,
 } from '@nrapp/observability';
-import type { NextFunction, Request, Response } from 'express';
-import type { HttpOutcomeContext } from './global-exception.filter';
-import { appLogger } from './observability';
-
-interface RequestWithCorrelation extends Request {
-  requestId?: string;
-}
-
-interface ResponseWithOutcome extends Response {
-  locals: Response['locals'] & {
-    observabilityOutcome?: HttpOutcomeContext;
-  };
-}
+import type { NextFunction } from 'express';
+import type { ResponseWithOutcome } from '../interfaces/http-outcome.interface';
+import type { AuthenticatedRequest } from '../interfaces/request-context.interface';
+import { appLogger } from '../logging/logger';
 
 @Injectable()
 export class PublicRequestOutcomeMiddleware implements NestMiddleware {
@@ -32,7 +22,7 @@ export class PublicRequestOutcomeMiddleware implements NestMiddleware {
   }
 
   use(
-    request: RequestWithCorrelation,
+    request: AuthenticatedRequest,
     response: ResponseWithOutcome,
     next: NextFunction,
   ): void {
@@ -43,7 +33,7 @@ export class PublicRequestOutcomeMiddleware implements NestMiddleware {
   }
 
   private recordRejection(
-    request: RequestWithCorrelation,
+    request: AuthenticatedRequest,
     response: ResponseWithOutcome,
   ): void {
     if (response.statusCode < 400 || response.statusCode >= 500) {
@@ -71,12 +61,6 @@ export class PublicRequestOutcomeMiddleware implements NestMiddleware {
 
     const level = classification.logLevel === 'warn' ? 'warn' : 'info';
     appLogger[level](fields, 'Public payment request rejected');
-    recordHttpRejection({
-      method: request.method,
-      route,
-      statusCode: response.statusCode,
-      errorCode: classification.code,
-    });
   }
 }
 

@@ -1,22 +1,8 @@
 import { ConfigService } from '@nestjs/config';
-import { injectTraceHeaders } from '@nrapp/observability';
 import { PaymentService } from './payment.service';
 
-jest.mock('@nrapp/observability', () => ({
-  ...jest.requireActual<typeof import('@nrapp/observability')>(
-    '@nrapp/observability',
-  ),
-  injectTraceHeaders: jest.fn(),
-}));
-
-describe('Payment outbox trace context', () => {
-  afterEach(() => jest.clearAllMocks());
-
-  it('lưu W3C context cùng outbox trong transaction webhook', async () => {
-    jest.mocked(injectTraceHeaders).mockReturnValue({
-      traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
-      tracestate: 'vendor=value',
-    });
+describe('Payment outbox request ID', () => {
+  it('lưu request ID cùng outbox trong transaction webhook', async () => {
     const repository = {
       processCassoTransaction: jest.fn().mockResolvedValue({
         outcome: 'PROCESSED',
@@ -44,15 +30,11 @@ describe('Payment outbox trace context', () => {
         },
       },
       't=1787540400000,v1=signature',
-      'req-trace',
+      'req-payment',
     );
 
     expect(repository.processCassoTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        requestId: 'req-trace',
-        traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
-        tracestate: 'vendor=value',
-      }),
+      expect.objectContaining({ requestId: 'req-payment' }),
     );
   });
 });

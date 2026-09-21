@@ -7,13 +7,7 @@ import {
   runWithLogContext,
 } from '@nrapp/observability';
 import type { NextFunction, Response } from 'express';
-import type { AuthenticatedRequest } from './auth';
-
-export {
-  CLIENT_REQUEST_ID_HEADER,
-  REQUEST_ID_HEADER,
-  SAFE_REQUEST_ID,
-} from '@nrapp/observability';
+import type { AuthenticatedRequest } from '../interfaces/request-context.interface';
 
 @Injectable()
 export class RequestIdMiddleware implements NestMiddleware {

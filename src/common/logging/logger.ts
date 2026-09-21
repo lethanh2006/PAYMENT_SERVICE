@@ -1,7 +1,7 @@
 import { Injectable, type OnApplicationShutdown } from '@nestjs/common';
 import {
   createAppLogger,
-  flushLoggerAndShutdownTelemetry,
+  flushLogger,
   PinoNestLogger,
 } from '@nrapp/observability';
 
@@ -12,8 +12,8 @@ export const appLogger: ReturnType<typeof createAppLogger> = createAppLogger({
 export const nestLogger = new PinoNestLogger(appLogger, 'Payment');
 
 @Injectable()
-export class TelemetryLifecycleService implements OnApplicationShutdown {
+export class LoggerLifecycleService implements OnApplicationShutdown {
   async onApplicationShutdown(): Promise<void> {
-    await flushLoggerAndShutdownTelemetry(appLogger, 3_000);
+    await flushLogger(appLogger);
   }
 }

@@ -15,6 +15,6 @@ concurrency:
 jobs:
   check:
     name: Shared Node.js quality gate
-    uses: lethanh2006/Logger/.github/workflows/reusable-node-ci.yml@3edef57e4ab192832b7a2d5465b2948592a55125
+    uses: lethanh2006/Logger/.github/workflows/reusable-node-ci.yml@8f26f109b44c5fb0454a911d9dd8c601350c6281
     with:
-      platform-ref: 3edef57e4ab192832b7a2d5465b2948592a55125
+      platform-ref: 8f26f109b44c5fb0454a911d9dd8c601350c6281

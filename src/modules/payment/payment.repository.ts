@@ -23,8 +23,6 @@ export interface CassoTransactionInput {
   paidAt: Date | null;
   providerValidationError: string | null;
   requestId: string | null;
-  traceparent: string | null;
-  tracestate: string | null;
 }
 
 export interface CassoProcessingResult {
@@ -218,8 +216,6 @@ export class PaymentRepository {
         eventType: 'payment.succeeded.v1',
         version: 1,
         requestId: input.requestId,
-        traceparent: input.traceparent,
-        tracestate: input.tracestate,
         attemptCount: 0,
         nextAttemptAt: occurredAt,
         lastError: null,

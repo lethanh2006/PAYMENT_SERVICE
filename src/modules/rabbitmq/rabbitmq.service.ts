@@ -5,7 +5,6 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { injectTraceHeaders } from '@nrapp/observability';
 import * as amqp from 'amqplib';
 
 @Injectable()
@@ -48,9 +47,9 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
     const deadLetterQueue = `${queueName}.dlq`;
     await channel.assertQueue(deadLetterQueue, { durable: true });
     await channel.assertQueue(queueName, { durable: true });
-    const headers = injectTraceHeaders(
-      options.requestId ? { 'x-request-id': options.requestId } : {},
-    );
+    const headers = options.requestId
+      ? { 'x-request-id': options.requestId }
+      : {};
     channel.sendToQueue(queueName, Buffer.from(JSON.stringify(payload)), {
       persistent: true,
       contentType: 'application/json',
