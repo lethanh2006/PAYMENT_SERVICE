@@ -1,5 +1,5 @@
 import { Body, Controller, Headers, HttpCode, Post, Req } from '@nestjs/common';
-import type { AuthenticatedRequest } from '../../common/interfaces/authenticated-user.interface';
+import type { AuthenticatedRequest } from '../../common/auth';
 import { PaymentService } from './payment.service';
 
 @Controller()

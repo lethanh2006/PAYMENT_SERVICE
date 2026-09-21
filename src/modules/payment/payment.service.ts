@@ -7,8 +7,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { injectTraceHeaders } from '@nrapp/observability';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
-import { userIdOf } from '../../common/interfaces/authenticated-user.interface';
+import type { AuthenticatedUser } from '../../common/auth';
+import { userIdOf } from '../../common/auth';
 import {
   PaymentEntity,
   PaymentMethod,

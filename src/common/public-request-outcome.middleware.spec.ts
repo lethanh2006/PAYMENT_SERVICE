@@ -1,7 +1,7 @@
 import type { ConfigService } from '@nestjs/config';
 import { EventEmitter } from 'node:events';
 import type { Request, Response } from 'express';
-import { appLogger } from '../observability/app-logger';
+import { appLogger } from './observability';
 import { PublicRequestOutcomeMiddleware } from './public-request-outcome.middleware';
 
 describe('PublicRequestOutcomeMiddleware', () => {

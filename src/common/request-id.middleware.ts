@@ -7,7 +7,7 @@ import {
   runWithLogContext,
 } from '@nrapp/observability';
 import type { NextFunction, Response } from 'express';
-import type { AuthenticatedRequest } from '../interfaces/authenticated-user.interface';
+import type { AuthenticatedRequest } from './auth';
 
 export {
   CLIENT_REQUEST_ID_HEADER,

@@ -1,6 +1,6 @@
 import { getLogContext } from '@nrapp/observability';
 import type { NextFunction, Response } from 'express';
-import type { AuthenticatedRequest } from '../interfaces/authenticated-user.interface';
+import type { AuthenticatedRequest } from './auth';
 import {
   CLIENT_REQUEST_ID_HEADER,
   PublicRequestIdMiddleware,

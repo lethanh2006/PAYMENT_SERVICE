@@ -1,7 +1,7 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { logAndRecordException, withMessageSpan } from '@nrapp/observability';
-import { appLogger } from '../../common/observability/app-logger';
+import { appLogger } from '../../common/observability';
 import { PaymentRepository } from './payment.repository';
 
 @Injectable()

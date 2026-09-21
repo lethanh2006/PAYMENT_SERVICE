@@ -4,13 +4,10 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import type {
-  AuthenticatedRequest,
-  AuthenticatedUser,
-} from '../interfaces/authenticated-user.interface';
-import { userIdOf } from '../interfaces/authenticated-user.interface';
-import { GatewaySignatureService } from '../security/gateway-signature.service';
-import { createQrRequestContext } from '../security/payment-request-context';
+import type { AuthenticatedRequest, AuthenticatedUser } from './auth';
+import { userIdOf } from './auth';
+import { GatewaySignatureService } from './gateway-signature.service';
+import { createQrRequestContext } from './payment-request-context';
 
 @Injectable()
 export class GatewayAuthGuard implements CanActivate {

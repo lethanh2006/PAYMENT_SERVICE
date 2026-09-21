@@ -8,7 +8,7 @@ import {
   withMessageSpan,
 } from '@nrapp/observability';
 import { DataSource, type QueryResult } from 'typeorm';
-import { appLogger } from '../../common/observability/app-logger';
+import { appLogger } from '../../common/observability';
 import { RabbitMQService } from '../rabbitmq/rabbitmq.service';
 
 interface ClaimedOutboxEvent {

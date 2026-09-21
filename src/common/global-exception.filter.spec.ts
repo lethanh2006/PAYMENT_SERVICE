@@ -1,7 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import type { ArgumentsHost } from '@nestjs/common';
 import type { HttpAdapterHost } from '@nestjs/core';
-import { appLogger } from '../observability/app-logger';
+import { appLogger } from './observability';
 import { GlobalExceptionFilter } from './global-exception.filter';
 
 describe('GlobalExceptionFilter payment observability', () => {

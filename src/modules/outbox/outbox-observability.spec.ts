@@ -1,7 +1,7 @@
 import type { ConfigService } from '@nestjs/config';
 import { withMessageSpan } from '@nrapp/observability';
 import type { DataSource } from 'typeorm';
-import { appLogger } from '../../common/observability/app-logger';
+import { appLogger } from '../../common/observability';
 import type { RabbitMQService } from '../rabbitmq/rabbitmq.service';
 import { OutboxPublisher } from './outbox.publisher';
 

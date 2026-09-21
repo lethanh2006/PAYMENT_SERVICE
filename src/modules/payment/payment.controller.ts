@@ -9,8 +9,8 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import type { AuthenticatedRequest } from '../../common/interfaces/authenticated-user.interface';
-import { GatewayAuthGuard } from '../../common/guards/gateway-auth.guard';
+import type { AuthenticatedRequest } from '../../common/auth';
+import { GatewayAuthGuard } from '../../common/gateway-auth.guard';
 import { CreatePaymentQrDto } from './dto/create-payment-qr.dto';
 import { PaymentHistoryQueryDto } from './dto/payment-history-query.dto';
 import { PaymentService } from './payment.service';

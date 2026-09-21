@@ -6,8 +6,8 @@ import {
   recordHttpRejection,
 } from '@nrapp/observability';
 import type { NextFunction, Request, Response } from 'express';
-import type { HttpOutcomeContext } from '../filters/global-exception.filter';
-import { appLogger } from '../observability/app-logger';
+import type { HttpOutcomeContext } from './global-exception.filter';
+import { appLogger } from './observability';
 
 interface RequestWithCorrelation extends Request {
   requestId?: string;
