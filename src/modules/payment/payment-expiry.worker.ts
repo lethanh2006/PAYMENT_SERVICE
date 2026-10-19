@@ -1,6 +1,7 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { logException } from '@nrapp/observability';
+
 import { appLogger } from '../../common/logging/logger';
 import { PaymentRepository } from './payment.repository';
 
@@ -11,7 +12,7 @@ export class PaymentExpiryWorker implements OnModuleInit, OnModuleDestroy {
   private running = false;
 
   constructor(
-    private readonly repository: PaymentRepository,
+    private readonly payments: PaymentRepository,
     configService: ConfigService,
   ) {
     const configured = Number(
@@ -43,7 +44,7 @@ export class PaymentExpiryWorker implements OnModuleInit, OnModuleDestroy {
     this.running = true;
     try {
       try {
-        const expired = await this.repository.expirePendingPayments();
+        const expired = await this.payments.expirePendingPayments();
         if (expired > 0) {
           appLogger.info(
             {

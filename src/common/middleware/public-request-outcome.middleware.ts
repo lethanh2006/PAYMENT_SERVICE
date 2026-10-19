@@ -5,6 +5,7 @@ import {
   normalizeRouteTemplate,
 } from '@nrapp/observability';
 import type { NextFunction } from 'express';
+
 import type { ResponseWithOutcome } from '../interfaces/http-outcome.interface';
 import type { AuthenticatedRequest } from '../interfaces/request-context.interface';
 import { appLogger } from '../logging/logger';

@@ -1,8 +1,8 @@
 const CREATE_QR_CONTEXT_VERSION = 'payment.create-qr.v2';
 
 /**
- * Binds the mutable payment fields to the Gateway HMAC. A captured identity
- * signature therefore cannot be replayed with another order or amount.
+ * Gắn các trường thanh toán có thể đổi vào HMAC của Gateway, để chữ ký danh tính
+ * bị bắt được không thể dùng lại cho đơn hoặc số tiền khác.
  */
 export function createQrRequestContext(
   orderId: unknown,

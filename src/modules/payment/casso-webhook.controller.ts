@@ -1,7 +1,12 @@
 import { Body, Controller, Headers, HttpCode, Post, Req } from '@nestjs/common';
+
 import type { AuthenticatedRequest } from '../../common/interfaces/request-context.interface';
 import { PaymentService } from './payment.service';
 
+/**
+ * Nhận webhook Casso báo giao dịch chuyển khoản; xác thực bằng chữ ký Casso, không đi qua
+ * Gateway.
+ */
 @Controller()
 export class CassoWebhookController {
   constructor(private readonly paymentService: PaymentService) {}

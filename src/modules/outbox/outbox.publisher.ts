@@ -6,6 +6,7 @@ import {
   sanitizeText,
 } from '@nrapp/observability';
 import { DataSource, type QueryResult } from 'typeorm';
+
 import { appLogger } from '../../common/logging/logger';
 import { RabbitMQService } from '../rabbitmq/rabbitmq.service';
 

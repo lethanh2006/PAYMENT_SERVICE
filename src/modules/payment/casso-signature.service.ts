@@ -1,6 +1,6 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHmac, timingSafeEqual } from 'node:crypto';
 
 // Casso có thể retry một delivery trong 24 giờ. Idempotency được đảm bảo bằng
 // provider transaction ID trong PostgreSQL; freshness chỉ bật khi cấu hình rõ.
@@ -14,8 +14,8 @@ interface ParsedCassoSignature {
 }
 
 /**
- * Creates the canonical JSON value required by Casso Webhook V2.
- * Object keys are sorted at every depth; array order remains significant.
+ * Tạo giá trị JSON chuẩn tắc mà Casso Webhook V2 yêu cầu: khoá object được sắp
+ * xếp ở mọi độ sâu; thứ tự phần tử mảng vẫn giữ nguyên ý nghĩa.
  */
 export function sortCassoPayload(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -54,9 +54,9 @@ export class CassoSignatureService {
   }
 
   /**
-   * Verifies a Casso `t=...,v1=...` signature against the active secret and,
-   * during key rotation, the previous secret. `maxAgeMs = 0` disables the
-   * timestamp freshness check but the timestamp still has to be milliseconds.
+   * Xác minh chữ ký Casso dạng `t=...,v1=...` với secret đang dùng và, khi đang xoay
+   * khoá, cả secret cũ. `maxAgeMs = 0` tắt kiểm tra độ mới của timestamp nhưng
+   * timestamp vẫn phải là mili giây.
    */
   verify(
     signatureHeader: string | undefined,
@@ -86,8 +86,8 @@ export class CassoSignatureService {
     const signedMessage = `${parsed.timestamp}.${canonicalPayload}`;
     let verified = false;
 
-    // Always check every configured secret/signature pair. Besides supporting
-    // rotation, this avoids exposing which secret matched through early return.
+    // Luôn kiểm tra mọi cặp secret/chữ ký đã cấu hình. Ngoài việc hỗ trợ xoay khoá,
+    // cách này tránh để lộ secret nào khớp qua việc thoát sớm.
     for (const secret of this.secrets) {
       const expected = createHmac('sha512', secret)
         .update(signedMessage, 'utf8')

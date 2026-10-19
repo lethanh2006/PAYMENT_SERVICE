@@ -1,6 +1,7 @@
+import { EventEmitter } from 'node:events';
 import { ConfigService } from '@nestjs/config';
 import * as amqp from 'amqplib';
-import { EventEmitter } from 'node:events';
+
 import { RabbitMQService } from './rabbitmq.service';
 
 jest.mock('amqplib', () => ({

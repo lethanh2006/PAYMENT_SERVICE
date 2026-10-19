@@ -1,5 +1,6 @@
 import type { ValidationError } from 'class-validator';
-import { createValidationException } from './validation.util';
+
+import { createValidationException } from './validation-exception';
 
 describe('createValidationException', () => {
   it('chỉ trả tên field và không đưa giá trị đầu vào vào response', () => {

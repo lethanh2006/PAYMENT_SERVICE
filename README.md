@@ -7,6 +7,15 @@ Redis.
 Xem [COMMON.md](COMMON.md) để đọc luồng request, cấu trúc code dùng chung và
 trạng thái Payment trong cấu hình VPS.
 
+## Kho dữ liệu
+
+PostgreSQL (TypeORM) vì dữ liệu là tiền và đối soát: cần ACID, ràng buộc unique cho
+idempotency webhook và outbox phát sự kiện an toàn bằng `FOR UPDATE SKIP LOCKED`. Service
+đang dormant nên PostgreSQL chưa chạy trên VPS (profile `payment-later`). Khi bật, nó nối
+với Canteen bằng sự kiện, không dùng chung database.
+
+Đánh giá đầy đủ và các quyết định đang chờ: [docs/DATA_STORES.md](../docs/DATA_STORES.md).
+
 ## Luồng chính
 
 1. Gateway xác thực JWT và lấy `finalAmount` trực tiếp từ Canteen.

@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import type { ArgumentsHost } from '@nestjs/common';
 import type { HttpAdapterHost } from '@nestjs/core';
+
 import { appLogger } from '../logging/logger';
 import { GlobalExceptionFilter } from './global-exception.filter';
 

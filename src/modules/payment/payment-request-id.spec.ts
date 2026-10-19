@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+
 import { PaymentService } from './payment.service';
 
 describe('Payment outbox request ID', () => {

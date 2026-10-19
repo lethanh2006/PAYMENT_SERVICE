@@ -1,5 +1,6 @@
 import type { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import type { DataSourceOptions } from 'typeorm';
+
 import { OutboxEventEntity } from './entities/outbox-event.entity';
 import { PaymentEntity } from './entities/payment.entity';
 import { WebhookReceiptEntity } from './entities/webhook-receipt.entity';

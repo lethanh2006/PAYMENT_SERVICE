@@ -1,5 +1,6 @@
 import type { ConfigService } from '@nestjs/config';
-import type { PaymentEntity } from '../database/entities/payment.entity';
+
+import type { PaymentEntity } from '../../database/entities/payment.entity';
 import type { CassoSignatureService } from './casso-signature.service';
 import {
   type CassoProcessingResult,

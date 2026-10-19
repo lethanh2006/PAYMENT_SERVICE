@@ -1,5 +1,6 @@
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+
 import { RabbitMQService } from '../rabbitmq/rabbitmq.service';
 
 export interface PaymentLivenessHealth {

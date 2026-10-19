@@ -1,5 +1,6 @@
 import type { ConfigService } from '@nestjs/config';
 import type { DataSource } from 'typeorm';
+
 import { appLogger } from '../../common/logging/logger';
 import type { RabbitMQService } from '../rabbitmq/rabbitmq.service';
 import { OutboxPublisher } from './outbox.publisher';

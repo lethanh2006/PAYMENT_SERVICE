@@ -1,12 +1,13 @@
 import { Injectable, type NestMiddleware } from '@nestjs/common';
 import {
   CLIENT_REQUEST_ID_HEADER,
-  REQUEST_ID_HEADER,
   createRequestCorrelation,
   isSafeRequestId,
+  REQUEST_ID_HEADER,
   runWithLogContext,
 } from '@nrapp/observability';
 import type { NextFunction, Response } from 'express';
+
 import type { AuthenticatedRequest } from '../interfaces/request-context.interface';
 
 @Injectable()

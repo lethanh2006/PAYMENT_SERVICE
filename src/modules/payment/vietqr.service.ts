@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 
 export interface BuildVietQrInput {
   amount: number;
-  /** Payment-owned reference. Its content is treated as opaque. */
+  /** Mã tham chiếu do Payment sở hữu; nội dung được coi là opaque. */
   reference: string;
 }
 

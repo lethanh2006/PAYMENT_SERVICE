@@ -23,7 +23,7 @@ khi bật `PAYMENT_PUBLIC_ENTRY_LOG_REJECTIONS=true`.
 | `utils` | Lấy user ID và tạo lỗi validation 422 với tên field an toàn. |
 
 Nghiệp vụ VietQR, chữ ký Casso và worker hết hạn nằm trong `modules/payment`.
-Transaction và migrations nằm trong `modules/database`; phát sự kiện thanh toán
+Transaction và migrations nằm trong `database`; phát sự kiện thanh toán
 nằm trong `modules/outbox` và `modules/rabbitmq`.
 
 Theo `backend/compose.vps.yaml`, Payment và PostgreSQL dành cho Payment thuộc

@@ -1,3 +1,4 @@
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   ForbiddenException,
@@ -5,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+
 import type { AuthenticatedUser } from '../../common/interfaces/request-context.interface';
 import { userIdOf } from '../../common/utils/user.util';
 import {
@@ -13,15 +14,15 @@ import {
   PaymentMethod,
   PaymentProvider,
   PaymentStatus,
-} from '../database/entities/payment.entity';
-import type { CreatePaymentQrDto } from './dto/create-payment-qr.dto';
+} from '../../database/entities/payment.entity';
 import {
   CassoSignatureService,
   sortCassoPayload,
 } from './casso-signature.service';
+import type { CreatePaymentQrDto } from './dto/create-payment-qr.dto';
 import {
-  PaymentRepository,
   type CassoProcessingResult,
+  PaymentRepository,
 } from './payment.repository';
 import { VietQrService } from './vietqr.service';
 
@@ -62,7 +63,7 @@ export class PaymentService {
   private readonly cassoTimezoneOffset: string;
 
   constructor(
-    private readonly repository: PaymentRepository,
+    private readonly payments: PaymentRepository,
     private readonly vietQrService: VietQrService,
     private readonly cassoSignatureService: CassoSignatureService,
     configService: ConfigService,
@@ -129,7 +130,7 @@ export class PaymentService {
       paidAt: null,
     });
 
-    const payment = await this.repository.createOrReuse(candidate);
+    const payment = await this.payments.createOrReuse(candidate);
     this.assertCanRead(payment, user);
     return this.toResponse(payment);
   }
@@ -138,7 +139,7 @@ export class PaymentService {
     paymentId: string,
     user: AuthenticatedUser | undefined,
   ): Promise<PaymentResponse> {
-    const payment = await this.repository.findById(paymentId);
+    const payment = await this.payments.findById(paymentId);
     if (!payment) {
       throw new NotFoundException('Không tìm thấy giao dịch thanh toán');
     }
@@ -150,7 +151,7 @@ export class PaymentService {
     orderId: string,
     user: AuthenticatedUser | undefined,
   ): Promise<PaymentResponse> {
-    const payment = await this.repository.findLatestByOrder(orderId);
+    const payment = await this.payments.findLatestByOrder(orderId);
     if (!payment) {
       throw new NotFoundException('Đơn hàng chưa có giao dịch thanh toán');
     }
@@ -163,7 +164,7 @@ export class PaymentService {
     limit: number,
   ): Promise<PaymentResponse[]> {
     const userId = this.requireUserId(user);
-    const payments = await this.repository.findHistory(userId, limit);
+    const payments = await this.payments.findHistory(userId, limit);
     return payments.map((payment) => this.toResponse(payment));
   }
 
@@ -193,7 +194,7 @@ export class PaymentService {
     for (const transaction of transactions) {
       const parsed = this.parseTransaction(transaction);
       results.push(
-        await this.repository.processCassoTransaction({
+        await this.payments.processCassoTransaction({
           providerEventId: parsed.providerEventId,
           paymentCode: this.extractPaymentCode(parsed.description) ?? '',
           amount: parsed.amount,
