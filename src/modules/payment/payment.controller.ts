@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   Param,
   ParseUUIDPipe,
   Post,
@@ -14,6 +15,7 @@ import { GatewayAuthGuard } from '../../common/guards/gateway-auth.guard';
 import type { AuthenticatedRequest } from '../../common/interfaces/request-context.interface';
 import { CreatePaymentQrDto } from './dto/create-payment-qr.dto';
 import { PaymentHistoryQueryDto } from './dto/payment-history-query.dto';
+import { ReleaseLinksDto } from './dto/release-links.dto';
 import { PaymentService } from './payment.service';
 
 /**
@@ -31,6 +33,16 @@ export class PaymentController {
     @Req() request: AuthenticatedRequest,
   ) {
     return this.paymentService.createQr(body, request.user);
+  }
+
+  /** Chữ ký Gateway gắn mã đơn và lý do (GatewayAuthGuard), thay cho kiểm quyền theo người gọi. */
+  @Post('orders/:orderId/release-links')
+  @HttpCode(200)
+  releaseOrderLinks(
+    @Param('orderId') orderId: string,
+    @Body() body: ReleaseLinksDto,
+  ) {
+    return this.paymentService.releaseOrderLinks(orderId, body.reason);
   }
 
   @Get('history')

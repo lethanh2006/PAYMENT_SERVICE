@@ -25,7 +25,9 @@ khi bật `PAYMENT_PUBLIC_ENTRY_LOG_REJECTIONS=true`.
 Nghiệp vụ PayOS (client API, chữ ký checksum), worker hết hạn và worker đối soát
 với PayOS nằm trong `modules/payment`. Webhook và đối soát cùng ghi tiền qua
 `PaymentService.recordPayosTransaction`; khóa, idempotency và điều kiện bảo vệ nằm
-trong `PaymentRepository`. Giải thích đầy đủ: [PAYMENT.md](PAYMENT.md).
+trong `PaymentRepository`. Route `orders/:orderId/release-links` (Gateway gọi sau khi
+Canteen huỷ đơn hoặc thu tiền mặt) được tin nhờ chữ ký gắn mã đơn và lý do, không kiểm
+quyền theo người gọi. Giải thích đầy đủ: [PAYMENT.md](PAYMENT.md).
 Transaction và migrations nằm trong `database`; phát sự kiện thanh toán
 nằm trong `modules/outbox` và `modules/rabbitmq`.
 

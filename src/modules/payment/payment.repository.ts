@@ -9,6 +9,7 @@ import {
   type QueryResult,
 } from 'typeorm';
 
+import type { ReleaseReason } from '../../common/security/payment-request-context';
 import { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
 import {
   PaymentEntity,
@@ -43,6 +44,13 @@ export interface CreateOrReuseResult {
   supersededLinkId: string | null;
 }
 
+/** Đơn đã huỷ hoặc đã thu tiền mặt: không cấp thêm link cho đơn này. */
+export class OrderPaymentClosedError extends Error {
+  constructor(readonly reason: ReleaseReason) {
+    super(`Đơn hàng đã đóng thanh toán online (${reason})`);
+  }
+}
+
 /** Trạng thái link phía PayOS mà đối soát còn phải hỏi lại; các trạng thái khác đã chốt. */
 const OPEN_PROVIDER_STATUSES = ['PENDING', 'PROCESSING'];
 
@@ -56,6 +64,10 @@ export class PaymentRepository {
       await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
         candidate.orderId,
       ]);
+      const closure = await this.closureOf(manager, candidate.orderId);
+      if (closure) {
+        throw new OrderPaymentClosedError(closure);
+      }
 
       const repository = manager.getRepository(PaymentEntity);
       // Khoá dòng PENDING trước khi đọc SUCCESS: webhook ghi SUCCESS cũng khoá dòng này, nên hai
@@ -99,6 +111,52 @@ export class PaymentRepository {
         supersededLinkId: stillOpen ? pending.paymentLinkId : null,
       };
     });
+  }
+
+  /** Lý do đơn đã đóng thanh toán online, `null` nếu đơn còn nhận. */
+  async findClosure(orderId: string): Promise<ReleaseReason | null> {
+    return this.closureOf(this.dataSource.manager, orderId);
+  }
+
+  /**
+   * Đóng thanh toán online của đơn và chốt CANCELLED mọi link PENDING, trả mã link PayOS cần huỷ.
+   * Chạy dưới cùng advisory lock với `createOrReuse`, nên request tạo link song song hoặc xong trước
+   * (link của nó bị huỷ ở đây) hoặc thấy dấu đóng và bị từ chối. Webhook tới sau gặp CANCELLED nên
+   * chuyển đối soát hoàn tiền, không ghi SUCCESS.
+   */
+  async closeOrder(orderId: string, reason: ReleaseReason): Promise<string[]> {
+    return this.dataSource.transaction(async (manager) => {
+      await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        orderId,
+      ]);
+      await manager.query(
+        `INSERT INTO order_payment_closures (order_id, reason) VALUES ($1, $2)
+         ON CONFLICT (order_id) DO NOTHING`,
+        [orderId, reason],
+      );
+      const cancelled = await manager.query<
+        [Array<{ payment_link_id: string | null }>, number]
+      >(
+        `UPDATE payments SET status = $2, updated_at = now()
+         WHERE order_id = $1 AND status = $3
+         RETURNING payment_link_id`,
+        [orderId, PaymentStatus.CANCELLED, PaymentStatus.PENDING],
+      );
+      return cancelled[0]
+        .map((row) => row.payment_link_id)
+        .filter((linkId): linkId is string => Boolean(linkId));
+    });
+  }
+
+  private async closureOf(
+    manager: EntityManager,
+    orderId: string,
+  ): Promise<ReleaseReason | null> {
+    const rows = await manager.query<Array<{ reason: ReleaseReason }>>(
+      'SELECT reason FROM order_payment_closures WHERE order_id = $1',
+      [orderId],
+    );
+    return rows[0]?.reason ?? null;
   }
 
   /**

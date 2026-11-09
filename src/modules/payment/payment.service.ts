@@ -1,6 +1,7 @@
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -9,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { logException } from '@nrapp/observability';
 
 import type { AuthenticatedUser } from '../../common/interfaces/request-context.interface';
+import type { ReleaseReason } from '../../common/security/payment-request-context';
 import { appLogger } from '../../common/logging/logger';
 import { userIdOf } from '../../common/utils/user.util';
 import {
@@ -19,6 +21,7 @@ import {
 } from '../../database/entities/payment.entity';
 import type { CreatePaymentQrDto } from './dto/create-payment-qr.dto';
 import {
+  OrderPaymentClosedError,
   PaymentRepository,
   type WebhookProcessingResult,
 } from './payment.repository';
@@ -29,6 +32,12 @@ import { PayosClient } from './payos.client';
 const MAX_DESCRIPTION_LENGTH = 9;
 // PayOS gửi thời gian giao dịch theo giờ Việt Nam, không kèm múi giờ.
 const PAYOS_TIMEZONE_OFFSET = '+07:00';
+
+const ORDER_CLOSED_MESSAGE = 'Đơn hàng không còn nhận thanh toán online';
+const CLOSE_REASON_TEXT: Record<ReleaseReason, string> = {
+  ORDER_CANCELLED: 'Đơn hàng đã huỷ',
+  PAID_IN_CASH: 'Đơn hàng đã thanh toán tiền mặt',
+};
 
 /** Một lần tiền về trên link PayOS, đến từ webhook hoặc từ đối soát. */
 export interface PayosTransactionData {
@@ -91,6 +100,10 @@ export class PaymentService {
     user: AuthenticatedUser | undefined,
   ): Promise<PaymentResponse> {
     this.assertCanCreateForOrder(dto.orderUserId, user);
+    // Kiểm sớm để khỏi tạo link PayOS vô ích; createOrReuse kiểm lại dưới khoá mới là chốt chặn thật.
+    if (await this.payments.findClosure(dto.orderId)) {
+      throw new ConflictException(ORDER_CLOSED_MESSAGE);
+    }
     const active = await this.payments.findActiveForOrder(dto.orderId);
     if (
       active &&
@@ -137,8 +150,21 @@ export class PaymentService {
       reconciledAt: null,
     });
 
-    const { payment, supersededLinkId } =
-      await this.payments.createOrReuse(candidate);
+    let created: Awaited<ReturnType<PaymentRepository['createOrReuse']>>;
+    try {
+      created = await this.payments.createOrReuse(candidate);
+    } catch (error: unknown) {
+      if (error instanceof OrderPaymentClosedError) {
+        // Đơn vừa bị huỷ hoặc thu tiền mặt trong lúc chờ PayOS: khoá link vừa tạo.
+        void this.cancelLink(
+          link.paymentLinkId,
+          CLOSE_REASON_TEXT[error.reason],
+        );
+        throw new ConflictException(ORDER_CLOSED_MESSAGE);
+      }
+      throw error;
+    }
+    const { payment, supersededLinkId } = created;
     if (payment.id !== candidate.id) {
       // Request song song đã tạo link khác cho đơn này; huỷ link thừa để khách không trả nhầm.
       void this.cancelLink(
@@ -152,6 +178,26 @@ export class PaymentService {
     }
     this.assertCanRead(payment, user);
     return this.toResponse(payment);
+  }
+
+  /**
+   * Đơn đã huỷ hoặc đã thu tiền mặt: đóng thanh toán online và huỷ mọi link còn mở phía PayOS,
+   * để khách không trả thêm qua mã QR cũ. Gateway chỉ gọi sau khi Canteen đã chấp nhận thao tác.
+   */
+  async releaseOrderLinks(
+    orderId: string,
+    reason: ReleaseReason,
+  ): Promise<{ cancelledLinks: number }> {
+    if (!/^[a-f0-9]{24}$/i.test(orderId)) {
+      throw new BadRequestException('orderId không hợp lệ');
+    }
+    const linkIds = await this.payments.closeOrder(orderId, reason);
+    await Promise.all(
+      linkIds.map((linkId) =>
+        this.cancelLink(linkId, CLOSE_REASON_TEXT[reason]),
+      ),
+    );
+    return { cancelledLinks: linkIds.length };
   }
 
   async getPayment(

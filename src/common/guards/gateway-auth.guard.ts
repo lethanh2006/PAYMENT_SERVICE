@@ -10,8 +10,14 @@ import type {
   AuthenticatedUser,
 } from '../interfaces/request-context.interface';
 import { GatewaySignatureService } from '../security/gateway-signature.service';
-import { createQrRequestContext } from '../security/payment-request-context';
+import {
+  createQrRequestContext,
+  releaseLinksRequestContext,
+} from '../security/payment-request-context';
 import { userIdOf } from '../utils/user.util';
+
+// Mã đơn là ObjectId nên đường dẫn không cần giải mã; controller kiểm lại định dạng.
+const RELEASE_LINKS_PATH = /\/orders\/([^/]+)\/release-links$/;
 
 @Injectable()
 export class GatewayAuthGuard implements CanActivate {
@@ -47,7 +53,7 @@ export class GatewayAuthGuard implements CanActivate {
   }
 
   private requestContext(request: AuthenticatedRequest): string | undefined {
-    if (request.method !== 'POST' || !request.path.endsWith('/create-qr')) {
+    if (request.method !== 'POST') {
       return undefined;
     }
     const body: unknown = request.body;
@@ -55,10 +61,17 @@ export class GatewayAuthGuard implements CanActivate {
       body !== null && typeof body === 'object' && !Array.isArray(body)
         ? (body as Record<string, unknown>)
         : {};
-    return createQrRequestContext(
-      record.orderId,
-      record.orderUserId,
-      record.amount,
-    );
+    if (request.path.endsWith('/create-qr')) {
+      return createQrRequestContext(
+        record.orderId,
+        record.orderUserId,
+        record.amount,
+      );
+    }
+    const release = RELEASE_LINKS_PATH.exec(request.path);
+    if (release) {
+      return releaseLinksRequestContext(release[1], record.reason);
+    }
+    return undefined;
   }
 }

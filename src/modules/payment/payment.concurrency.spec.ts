@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
+import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions';
 
 import { paymentDatabaseOptions } from '../../database/database.options';
 import { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
@@ -11,6 +12,7 @@ import {
   PaymentStatus,
 } from '../../database/entities/payment.entity';
 import {
+  OrderPaymentClosedError,
   PaymentRepository,
   type PayosTransactionInput,
 } from './payment.repository';
@@ -102,7 +104,7 @@ describeWithDatabase(
         PAYMENT_DB_PASSWORD: decodeURIComponent(url.password),
         PAYMENT_DB_NAME: databaseName,
       });
-      const options = paymentDatabaseOptions();
+      const options = paymentDatabaseOptions() as PostgresConnectionOptions;
       process.env = savedEnvironment;
 
       dataSource = new DataSource({
@@ -221,6 +223,55 @@ describeWithDatabase(
           [PaymentStatus.SUCCESS, 1],
           [PaymentStatus.CANCELLED, 0],
         ]).toContainEqual([status, events]);
+      }
+    });
+
+    it('huỷ đơn song song với tạo link: không bao giờ còn link mở cho đơn đã đóng', async () => {
+      let refused = 0;
+      for (let round = 0; round < 25; round += 1) {
+        const orderId = `order-${randomUUID()}`;
+
+        const [created] = await Promise.allSettled([
+          payments.createOrReuse(candidate(orderId)),
+          payments.closeOrder(orderId, 'ORDER_CANCELLED'),
+        ]);
+
+        if (created.status === 'rejected') {
+          expect(created.reason).toBeInstanceOf(OrderPaymentClosedError);
+          refused += 1;
+        }
+        await expect(
+          dataSource
+            .getRepository(PaymentEntity)
+            .countBy({ orderId, status: PaymentStatus.PENDING }),
+        ).resolves.toBe(0);
+        // Sau khi đã đóng, mọi lần tạo link tiếp theo đều bị từ chối.
+        await expect(
+          payments.createOrReuse(candidate(orderId)),
+        ).rejects.toBeInstanceOf(OrderPaymentClosedError);
+      }
+      // Ghi lại để thấy cả hai thứ tự đều đã xảy ra trong 25 vòng.
+      console.info(
+        `tạo link bị từ chối ${refused}/25 vòng, bị huỷ sau khi tạo ${25 - refused}/25 vòng`,
+      );
+    });
+
+    it('huỷ đơn đúng lúc tiền về: hoặc đã trả và báo canteen, hoặc đã đóng và chờ hoàn tiền', async () => {
+      for (let round = 0; round < 25; round += 1) {
+        const orderId = `order-${randomUUID()}`;
+        const { payment } = await payments.createOrReuse(candidate(orderId));
+
+        const [webhook] = await Promise.all([
+          payments.processPayosTransaction(transfer(payment, `FT-X${round}`)),
+          payments.closeOrder(orderId, 'ORDER_CANCELLED'),
+        ]);
+
+        const status = await statusOf(payment.id);
+        const events = await outboxCount(payment.id);
+        expect([
+          [PaymentStatus.SUCCESS, 1, 'PROCESSED'],
+          [PaymentStatus.CANCELLED, 0, 'REVIEW_REQUIRED'],
+        ]).toContainEqual([status, events, webhook.outcome]);
       }
     });
   },

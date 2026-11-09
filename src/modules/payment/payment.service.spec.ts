@@ -1,10 +1,11 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import {
   PaymentEntity,
   PaymentStatus,
 } from '../../database/entities/payment.entity';
+import { OrderPaymentClosedError } from './payment.repository';
 import { parsePayosDate, PaymentService } from './payment.service';
 
 const ORDER_ID = '507f1f77bcf86cd799439011';
@@ -34,6 +35,8 @@ function payment(overrides: Partial<PaymentEntity> = {}): PaymentEntity {
 function setup() {
   const payments = {
     findActiveForOrder: jest.fn().mockResolvedValue(null),
+    findClosure: jest.fn().mockResolvedValue(null),
+    closeOrder: jest.fn().mockResolvedValue([] as string[]),
     createOrReuse: jest.fn((candidate: PaymentEntity) =>
       Promise.resolve({
         payment: Object.assign(candidate, { createdAt: new Date() }),
@@ -166,6 +169,73 @@ describe('PaymentService với PayOS', () => {
       fromWebhook.providerEventId,
     );
     expect(fromReconciliation.payloadHash).toBe(fromWebhook.payloadHash);
+  });
+
+  it('không tạo link cho đơn đã đóng thanh toán online, không gọi PayOS', async () => {
+    const { service, payments, payosClient } = setup();
+    payments.findClosure.mockResolvedValue('ORDER_CANCELLED');
+
+    await expect(service.createQr(dto, owner)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(payosClient.createPaymentLink).not.toHaveBeenCalled();
+  });
+
+  it('đơn bị đóng trong lúc chờ PayOS: trả 409 và huỷ link vừa tạo', async () => {
+    const { service, payments, payosClient } = setup();
+    payments.createOrReuse.mockRejectedValue(
+      new OrderPaymentClosedError('PAID_IN_CASH'),
+    );
+
+    await expect(service.createQr(dto, owner)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(payosClient.cancelPaymentLink).toHaveBeenCalledWith(
+      'link-1',
+      'Đơn hàng đã thanh toán tiền mặt',
+    );
+  });
+
+  it('đóng đơn rồi huỷ phía PayOS mọi link còn mở', async () => {
+    const { service, payments, payosClient } = setup();
+    payments.closeOrder.mockResolvedValue(['link-a', 'link-b']);
+
+    await expect(
+      service.releaseOrderLinks(ORDER_ID, 'ORDER_CANCELLED'),
+    ).resolves.toEqual({ cancelledLinks: 2 });
+
+    expect(payments.closeOrder).toHaveBeenCalledWith(
+      ORDER_ID,
+      'ORDER_CANCELLED',
+    );
+    expect(payosClient.cancelPaymentLink).toHaveBeenCalledWith(
+      'link-a',
+      'Đơn hàng đã huỷ',
+    );
+    expect(payosClient.cancelPaymentLink).toHaveBeenCalledWith(
+      'link-b',
+      'Đơn hàng đã huỷ',
+    );
+  });
+
+  it('PayOS lỗi khi huỷ link không làm hỏng việc đóng đơn', async () => {
+    const { service, payments, payosClient } = setup();
+    payments.closeOrder.mockResolvedValue(['link-a']);
+    payosClient.cancelPaymentLink.mockRejectedValue(new Error('PayOS 503'));
+
+    await expect(
+      service.releaseOrderLinks(ORDER_ID, 'PAID_IN_CASH'),
+    ).resolves.toEqual({ cancelledLinks: 1 });
+  });
+
+  it('từ chối mã đơn sai định dạng khi đóng đơn', async () => {
+    const { service, payments } = setup();
+
+    await expect(
+      service.releaseOrderLinks('../../x', 'ORDER_CANCELLED'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(payments.closeOrder).not.toHaveBeenCalled();
   });
 
   it('từ chối webhook sai chữ ký', async () => {

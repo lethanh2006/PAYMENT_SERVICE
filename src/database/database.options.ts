@@ -9,6 +9,7 @@ import { AddOutboxObservability1724000001000 } from './migrations/1724000001000-
 import { RemoveOutboxTraceColumns1724000002000 } from './migrations/1724000002000-remove-outbox-trace-columns';
 import { SwitchToPayos1724000003000 } from './migrations/1724000003000-switch-to-payos';
 import { AddPayosReconciliation1724000004000 } from './migrations/1724000004000-add-payos-reconciliation';
+import { AddOrderPaymentClosures1724000005000 } from './migrations/1724000005000-add-order-payment-closures';
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value ?? fallback);
@@ -44,6 +45,7 @@ export function paymentDatabaseOptions(): TypeOrmModuleOptions &
       RemoveOutboxTraceColumns1724000002000,
       SwitchToPayos1724000003000,
       AddPayosReconciliation1724000004000,
+      AddOrderPaymentClosures1724000005000,
     ],
     migrationsRun:
       process.env.PAYMENT_DB_RUN_MIGRATIONS?.toLowerCase() !== 'false',

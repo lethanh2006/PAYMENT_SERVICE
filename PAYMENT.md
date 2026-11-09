@@ -15,7 +15,9 @@ Cùng phong cách với [docs/DEVOPS.md](../docs/DEVOPS.md). Mỗi công nghệ 
 > - Ngày 2026-11-09 bổ sung: sửa một lỗi **lost update** (mục 5, tình huống 6), thêm **đối soát chủ
 >   động** với PayOS (mục 7), huỷ link cũ khi bị thay, và bộ **test tranh chấp trên PostgreSQL thật**
 >   (mục 8).
-> - Chưa có: API hoàn tiền, huỷ link khi khách huỷ đơn, cảnh báo tự động. Xem mục 10.
+> - Bổ sung tiếp cùng ngày: đơn **bị huỷ** hoặc **đã thu tiền mặt** thì đóng thanh toán online và
+>   khoá link QR còn mở (mục 5, tình huống 10, 12, 13), kiểm thử đầu-cuối trong cụm Kubernetes.
+> - Chưa có: API hoàn tiền, cảnh báo tự động. Xem mục 10.
 
 ## Mục lục
 
@@ -49,6 +51,7 @@ Những gì hệ thống **đảm bảo**, cơ chế, và bằng chứng:
 | Sự kiện "đơn đã trả" **không mất** khi RabbitMQ hay canteen đang hỏng | Outbox ghi cùng transaction, gửi lại với backoff, RabbitMQ xác nhận từng message, queue bền | Thiết kế; xem mục 6 |
 | **Không ai sửa được số tiền**, kể cả client | Gateway tự đọc tổng tiền từ canteen; số tiền nằm trong chữ ký HMAC nội bộ | `gateway/.../payment.service.ts`, `payment-request-context.ts` |
 | **Webhook giả** bị từ chối | HMAC-SHA256 với checksum key của PayOS, so sánh thời gian hằng | `payos-signature.ts` và spec |
+| Đơn **đã huỷ** hoặc **đã thu tiền mặt** không còn nhận tiền qua mã QR cũ, kể cả khi đang có request tạo QR chạy song song | Gateway báo payment sau khi canteen chấp nhận; payment ghi dấu "đơn đã đóng" và huỷ link còn mở dưới cùng khoá với việc tạo link | Test 25 vòng huỷ đơn song song tạo link: **đỏ** khi bỏ dấu đóng, xanh khi có; kiểm thử đầu-cuối trong cụm |
 | Tiền về **sai chỗ** (đơn đã huỷ, đã trả, lệch tiền, trả hai lần) không bị áp bừa vào đơn | Kiểm tra trạng thái trong transaction; chuyển sang hàng chờ đối soát tay để hoàn tiền | Test "hai người cùng chuyển tiền vào một link" |
 
 ---
@@ -158,6 +161,8 @@ soát hằng ngày; NRApp đối soát **mỗi phút** cho các link chưa chố
                                                            Canteen (8) đơn → PAID / COMPLETED / PAYOS
  Worker đối soát (mỗi phút) ──(9) GET trạng thái link ──► PayOS     (lưới an toàn khi (5) bị lỡ)
  Web ──(10) hỏi trạng thái mỗi 3 giây: GET /api/payment/orders/:orderId
+ Huỷ đơn / thu tiền mặt ──► Gateway ──► canteen chấp nhận ──(11) POST .../orders/:orderId/release-links ──► Payment
+                                                              đóng đơn + huỷ link còn mở (PayOS)
 ```
 
 ### 2.2 Từng bước, ai chịu trách nhiệm gì
@@ -173,6 +178,7 @@ soát hằng ngày; NRApp đối soát **mỗi phút** cho các link chưa chố
 | 8 | Canteen | Đặt đơn đã trả; đơn huỷ, đã trả, lệch tiền thì **không đổi đơn** mà ghi log để hoàn tiền | Canteen là chủ dữ liệu đơn; payment không sửa database của service khác |
 | 9 | Payment | Đối soát chủ động | Mục 7 |
 | 10 | Web | Hỏi trạng thái, cập nhật giao diện khi tiền về | Người dùng không phải bấm "làm mới" |
+| 11 | Gateway → Payment | Sau khi canteen huỷ đơn hoặc thu tiền mặt, ký mã đơn + lý do vào chữ ký `payment.release-links.v1` rồi báo payment; payment ghi dấu đóng, chốt `CANCELLED` các link mở, huỷ chúng phía PayOS | Chữ ký chứng minh canteen đã chấp nhận, nên payment không cần tự kiểm quyền; ai gọi thẳng cũng không huỷ được link của đơn khác |
 
 ### 2.3 Dữ liệu (PostgreSQL riêng của payment)
 
@@ -181,6 +187,7 @@ soát hằng ngày; NRApp đối soát **mỗi phút** cho các link chưa chố
 | `payments` | Mỗi link PayOS là một dòng: đơn, chủ đơn, số tiền, trạng thái, `payment_code` (= `orderCode` PayOS), `payment_link_id`, hạn, lúc trả, trạng thái phía PayOS (`provider_status`), lần đối soát (`reconciled_at`) | `payment_code` duy nhất; `amount > 0`; `currency = 'VND'`; **mỗi đơn tối đa một `PENDING`** và **tối đa một `SUCCESS`** (unique index có điều kiện); `provider_transaction_id` duy nhất |
 | `webhook_receipts` | Mỗi lần tiền về đã xử lý: mã sự kiện, mã băm nội dung, kết quả (`PROCESSED`, `REVIEW_REQUIRED`...), lý do | **`(provider, provider_event_id)` duy nhất**: khóa idempotency |
 | `outbox_events` | Sự kiện chờ gửi RabbitMQ, số lần thử, lần thử kế tiếp, lỗi cuối | Khóa ngoại tới `payments` |
+| `order_payment_closures` | Đơn đã đóng thanh toán online và lý do (`ORDER_CANCELLED`, `PAID_IN_CASH`) | Khoá chính là mã đơn: ghi lại bao nhiêu lần cũng chỉ một dòng |
 | `payment_migrations` | Lịch sử migration TypeORM | |
 
 ---
@@ -205,7 +212,7 @@ soát hằng ngày; NRApp đối soát **mỗi phút** cho các link chưa chố
 | `PENDING` | Link đang mở | create-qr | Có |
 | `SUCCESS` | Đã ghi nhận tiền; đã xếp sự kiện cho canteen | Webhook hoặc đối soát | Lần tiền về thứ hai của cùng link: không ghi, chuyển đối soát tay để hoàn |
 | `EXPIRED` | Quá hạn, hoặc bị thay bằng link mới vì đơn đổi số tiền | Worker hết hạn, create-qr | **Có**: PayOS tự khóa link theo hạn, nên tiền tới được là tiền hợp lệ của link này |
-| `CANCELLED` | PayOS báo link đã huỷ | Worker đối soát | Không: tiền tới (nếu có) chuyển đối soát tay |
+| `CANCELLED` | PayOS báo link đã huỷ, hoặc đơn đã bị huỷ / đã thu tiền mặt | Worker đối soát, hoặc `release-links` | Không: tiền tới (nếu có) chuyển đối soát tay |
 | `FAILED`, `REVIEW_REQUIRED`, `REFUNDED` | Có trong schema để dành cho hoàn tiền sau này | Code hiện **chưa** đặt các trạng thái này lên `payments`; các ca cần xem tay được ghi ở `webhook_receipts` | |
 
 Mọi thay đổi trạng thái đều có **điều kiện bảo vệ** trong câu lệnh, ví dụ đối soát chỉ sửa dòng còn
@@ -284,9 +291,11 @@ Mỗi dòng: điều có thể sai nếu không cẩn thận, cơ chế chặn, 
 | 6 | **Tiền về đúng lúc cấp link mới cho đơn** (đơn đổi số tiền) | **Lost update**: request cấp link đọc payment là `PENDING` (không khóa), webhook ghi `SUCCESS`, rồi request ghi đè `EXPIRED`. Tiền đã về nhưng hệ thống nói "hết hạn" | **Sửa ngày 2026-11-09**: `createOrReuse` khóa dòng `PENDING` bằng `FOR UPDATE` rồi mới đọc lại `SUCCESS`. Webhook đang giữ khóa thì request chờ; sau khi chờ, PostgreSQL kiểm lại điều kiện `status = 'PENDING'` trên bản mới nên thấy đã `SUCCESS` và trả về luôn | `SUCCESS` được giữ | Concurrency test 4: 25 vòng chạy đua. **Code cũ: đỏ** (`Expected: "SUCCESS"`, `Received: "EXPIRED"`). **Code mới: xanh** |
 | 7 | Webhook và worker đối soát **cùng báo một giao dịch** | Ghi nhận hai lần | Cả hai nguồn tạo **cùng mã sự kiện** `<paymentLinkId>:<reference>` và cùng mã băm nội dung, đi qua cùng một hàm `recordPayosTransaction` | Lần sau là `DUPLICATE` | Unit test "webhook và đối soát cho cùng mã sự kiện, cùng mã băm" |
 | 8 | Đối soát chốt `CANCELLED` đúng lúc tiền về | Payment vừa `CANCELLED` vừa báo canteen là đã trả | Câu `UPDATE` của đối soát có điều kiện `status IN ('PENDING','EXPIRED')`; webhook khóa dòng. Hai bên chạy lần lượt | Hoặc tiền về trước: `SUCCESS` + 1 sự kiện. Hoặc huỷ trước: `CANCELLED` + 0 sự kiện, khoản tiền chờ hoàn. **Không bao giờ** lẫn lộn | Concurrency test 5 (25 vòng) |
-| 9 | Thu ngân bấm "đã thu tiền mặt" đúng lúc PayOS báo đã trả | Đơn bị trả hai lần mà không ai biết | Canteen cập nhật đơn bằng câu lệnh có điều kiện (`paymentStatus = 'PENDING'`). Bên thắng ghi; bên thua: thu ngân nhận lỗi 409, hoặc sự kiện PayOS bị ghi log `canteen.payment.unapplied` để hoàn tiền | Đơn chỉ được trả một lần; khoản thừa có dấu vết | `canteen/src/modules/order/order-payment.service.ts` và spec |
-| 10 | Khách huỷ đơn khi đang chuyển khoản | Tiền về cho đơn đã huỷ | Canteen thấy đơn `CANCELLED` thì không đổi đơn, ghi `canteen.payment.unapplied`. Web cảnh báo trong hộp thoại huỷ: "đừng chuyển khoản sau khi huỷ" | Tiền chờ hoàn tay | Spec của canteen. **Còn thiếu**: huỷ link PayOS khi huỷ đơn (mục 10) |
+| 9 | Thu ngân bấm "đã thu tiền mặt" trong lúc khách đang mở QR, hoặc đúng lúc PayOS báo đã trả | Khách trả thêm qua QR; hoặc đơn bị trả hai lần mà không ai biết | Canteen cập nhật đơn bằng câu lệnh có điều kiện (`paymentStatus = 'PENDING'`): bên thắng ghi, bên thua nhận 409 hoặc log `canteen.payment.unapplied` để hoàn tiền. Thu tiền mặt xong, Gateway gọi `release-links` (`PAID_IN_CASH`) để khoá link QR còn mở | Đơn chỉ được trả một lần; khoản thừa có dấu vết | `canteen/src/modules/order/order-payment.service.ts`; kiểm thử đầu-cuối trong cụm |
+| 10 | Khách huỷ đơn khi đang mở QR | Khách vẫn quét mã cũ, tiền về cho đơn đã huỷ | Huỷ đơn xong, Gateway gọi `release-links` (`ORDER_CANCELLED`): payment chốt `CANCELLED` và huỷ link phía PayOS, PayOS không nhận tiền vào link đó nữa. Payment lỗi thì việc huỷ đơn vẫn thành công, link hết hạn sau tối đa 15 phút; tiền lỡ về thì canteen ghi `canteen.payment.unapplied` | Không còn mã QR dùng được cho đơn đã huỷ | Kiểm thử đầu-cuối trong cụm (2026-11-09); test Gateway "Canteen trước, rồi mới đóng thanh toán online" |
 | 11 | Chạy **nhiều bản sao** payment (Kubernetes scale) | Hai worker gửi trùng sự kiện, hai worker hết hạn đè nhau | Outbox `SKIP LOCKED`; worker hết hạn và đối soát dùng `UPDATE` có điều kiện; mọi đường ghi tiền đều qua khóa + khóa duy nhất | An toàn; có thể tốn thêm vài lần gọi PayOS | Thiết kế |
+| 12 | **Huỷ đơn đúng lúc request tạo QR đang chờ PayOS** (khoảng 1 giây) | Việc huỷ chạy xong khi link chưa được ghi; request tạo QR ghi link **sau** đó, để lại mã QR còn dùng được cho đơn đã huỷ | Huỷ ghi dấu "đơn đã đóng" (`order_payment_closures`) dưới **cùng advisory lock** với `createOrReuse`. Hai bên chạy lần lượt: tạo trước thì link bị huỷ ngay khi đóng; đóng trước thì tạo link thấy dấu đóng, trả 409 và huỷ link PayOS vừa tạo | Không bao giờ còn link mở cho đơn đã đóng | Concurrency test 6 (25 vòng; cả hai thứ tự đều xảy ra: 6 vòng bị từ chối, 19 vòng bị huỷ sau khi tạo). **Bỏ dấu đóng thì đỏ** |
+| 13 | Huỷ đơn đúng lúc tiền về | Đơn vừa huỷ vừa báo canteen đã trả | Đóng đơn chỉ đổi link còn `PENDING`, webhook khoá dòng; chạy lần lượt | Hoặc tiền về trước: `SUCCESS` + 1 sự kiện (canteen thấy đơn huỷ, ghi để hoàn). Hoặc đóng trước: `CANCELLED`, 0 sự kiện, khoản tiền `REVIEW_REQUIRED` | Concurrency test 7 (25 vòng) |
 
 **Cách đọc tình huống 6 bằng thời gian:**
 
@@ -368,7 +377,7 @@ tối đa 20 link.
 ### 8.1 Unit test (chạy trong CI, không cần database)
 
 ```bash
-cd payment && npm test     # 12 bộ test, 41 test (2026-11-09)
+cd payment && npm test     # 13 bộ test, 49 test (2026-11-09)
 ```
 
 Các test liên quan tới mục 5 và 6: `payment.service.spec.ts` (dùng lại/huỷ link, webhook sai chữ ký,
@@ -400,14 +409,28 @@ service khác làm với test cần hạ tầng.
 | Hai người cùng chuyển tiền vào một link | Tình huống 3 | Qua: 1 `PROCESSED`, 1 `REVIEW_REQUIRED`, 1 sự kiện |
 | Cấp link mới đúng lúc tiền về, 25 vòng | Tình huống 6 | Qua. **Với code cũ: đỏ** (`Expected: "SUCCESS"`, `Received: "EXPIRED"`) |
 | Đối soát chốt `CANCELLED` song song tiền về, 25 vòng | Tình huống 8 | Qua: chỉ có (`SUCCESS`, 1 sự kiện) hoặc (`CANCELLED`, 0 sự kiện) |
+| Huỷ đơn song song tạo link, 25 vòng | Tình huống 12 | Qua: 0 link mở sau khi đóng, cả hai thứ tự đều xảy ra. **Bỏ dấu đóng: đỏ** (đơn đã đóng vẫn tạo được link) |
+| Huỷ đơn đúng lúc tiền về, 25 vòng | Tình huống 13 | Qua: chỉ có (`SUCCESS`, 1 sự kiện, `PROCESSED`) hoặc (`CANCELLED`, 0 sự kiện, `REVIEW_REQUIRED`) |
 
-Cả 5 test chạy hết khoảng 3,5 giây.
+Cả 7 test chạy hết khoảng 4 giây.
+
+### 8.3 Kiểm thử đầu-cuối trong cụm Kubernetes
+
+Tạo đơn thật qua Gateway, chèn thẳng vào database một link `PENDING` với mã link giả (để không tạo
+link thật trên tài khoản PayOS), rồi thao tác qua Gateway (2026-11-09):
+
+| Bước | Kết quả |
+| --- | --- |
+| Khách huỷ đơn đang có link mở | 200; link chuyển `CANCELLED`; dấu đóng `ORDER_CANCELLED` |
+| Tạo QR lại cho đơn đã huỷ | 409 "Đơn hàng không còn chờ thanh toán" |
+| Admin xác nhận đã thu tiền mặt cho đơn đang có link mở | 200; link chuyển `CANCELLED`; dấu đóng `PAID_IN_CASH` |
+| Log | Payment ghi cảnh báo không huỷ được link phía PayOS (đúng, vì mã link là giả); Gateway không có lỗi |
 
 **Vì sao "đỏ với code cũ" quan trọng:** một test tranh chấp luôn xanh có thể là test không tạo được
 tranh chấp. Chạy nó trên code cũ thấy đỏ, trên code mới thấy xanh, mới chứng minh được hai điều: tranh
 chấp có thật, và bản sửa chặn được nó.
 
-### 8.3 Chưa test
+### 8.4 Chưa test
 
 - Luồng thật với PayOS (cần tài khoản và URL webhook công khai); hiện kiểm bằng `npm run test:smoke`
   và tay.
@@ -452,11 +475,10 @@ một giao dịch thử với `orderCode` không tồn tại: giao dịch đó c
 
 ## 10. Giới hạn và việc nên làm tiếp
 
-Xếp theo mức đáng làm trước:
+Xếp theo mức đáng làm trước. (Đã xong ngày 2026-11-09: huỷ link khi khách huỷ đơn hoặc khi thu tiền mặt.)
 
 | Việc | Vì sao | Hướng làm |
 | --- | --- | --- |
-| Huỷ link PayOS khi khách huỷ đơn | Hiện khách vẫn trả được link cũ của đơn đã huỷ (tối đa 15 phút), dẫn tới hoàn tiền tay | Gateway, sau khi canteen huỷ đơn thành công, gọi payment huỷ link `PENDING` của đơn (có chữ ký) |
 | Bù trừ tự động (saga) | `canteen.payment.unapplied` chỉ là log; payment không biết khoản nào cần hoàn | Canteen phát sự kiện `canteen.payment.rejected.v1`, payment ghi trạng thái "cần hoàn tiền"; thêm API hoàn tiền |
 | Metric và cảnh báo | Hiện phải đọc log mới biết có khoản cần xử lý | Đếm `REVIEW_REQUIRED`, `payment.reconcile.recovered`, outbox tồn đọng; cảnh báo khi > 0 |
 | Ghi ý định trước khi gọi PayOS | Quá giờ khi tạo link có thể để lại một link PayOS mà NRApp không biết | Ghi dòng `CREATING` với `orderCode` trước, gọi PayOS sau, rồi cập nhật |
@@ -527,6 +549,11 @@ trạng thái, test xanh.
 chỉ làm chờ các request của **cùng** một đơn, vài mili giây. Khóa lạc quan hợp khi xung đột hiếm và có
 thể thử lại an toàn, ví dụ sửa hồ sơ.
 
+**Hỏi: Khách huỷ đơn đúng lúc đang tạo mã QR thì sao?**
+Đáp: Việc huỷ ghi dấu "đơn đã đóng" dưới cùng advisory lock theo mã đơn với việc tạo link, nên hai
+thao tác chạy lần lượt: tạo trước thì link bị huỷ khi đóng, đóng trước thì tạo link bị từ chối. Test 25
+vòng chạy đua chứng minh không còn link mở nào cho đơn đã đóng, và test đó đỏ khi bỏ dấu đóng.
+
 **Hỏi: Client gửi số tiền 1.000 đồng cho đơn 100.000 đồng thì sao?**
 Đáp: Client không gửi số tiền. Gateway đọc tổng tiền từ canteen và ký nó vào HMAC nội bộ; payment chỉ
 tin số tiền có chữ ký. Khi tiền về, payment so số tiền thực nhận với số tiền của link, canteen so lần
@@ -561,6 +588,7 @@ nữa với tổng đơn.
 | Schema, ràng buộc | `src/database/migrations/` |
 | Outbox | `src/modules/outbox/outbox.publisher.ts` |
 | Test tranh chấp | `src/modules/payment/payment.concurrency.spec.ts` |
+| Đóng thanh toán online khi huỷ đơn / thu tiền mặt | Payment: `releaseOrderLinks` trong `payment.service.ts`, `closeOrder` trong `payment.repository.ts`, migration `1724000005000-add-order-payment-closures.ts`; chữ ký: `common/security/payment-request-context.ts`, `common/guards/gateway-auth.guard.ts`. Gateway: `canteen-order.controller.ts`, `PaymentService.releaseOrderLinks` |
 | Canteen áp sự kiện | `canteen/src/modules/order/order-payment.service.ts` |
 | Web: hộp thoại QR, hỏi trạng thái, quay về từ PayOS | `nrapp-user-web/app/(user)/can-tin/payos-payment-panel.tsx` |
 | Chạy trong Kubernetes | `backend/k8s/apps/payment.yaml`, `backend/docs/KUBERNETES.md` |
