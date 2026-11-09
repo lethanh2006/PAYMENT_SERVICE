@@ -47,7 +47,7 @@ export class PublicRequestOutcomeMiddleware implements NestMiddleware {
       code: outcome?.errorCode,
       expected: true,
     });
-    const route = publicRouteTemplate(request.path);
+    const route = normalizeRouteTemplate(request.path);
     const fields = {
       'event.name': 'http.request.rejected',
       'http.request.method': request.method,
@@ -63,14 +63,4 @@ export class PublicRequestOutcomeMiddleware implements NestMiddleware {
     const level = classification.logLevel === 'warn' ? 'warn' : 'info';
     appLogger[level](fields, 'Public payment request rejected');
   }
-}
-
-function publicRouteTemplate(path: string): string {
-  if (path.endsWith('/webhooks/casso')) {
-    return '/api/payment/webhooks/casso';
-  }
-  if (path.endsWith('/callback')) {
-    return '/api/payment/callback';
-  }
-  return normalizeRouteTemplate('/webhook/casso');
 }

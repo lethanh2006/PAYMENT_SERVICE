@@ -29,7 +29,7 @@ npm run build
 ## Payment chưa có CD
 
 Payment chỉ dùng shared CI. Không thêm `cd.yml`, không cấu hình key deploy và
-không khởi động Payment/PostgreSQL trên VPS cho tới khi Casso được khôi phục và
+không khởi động Payment/PostgreSQL trên VPS cho tới khi PayOS được cấu hình và
 kế hoạch migration, webhook, backup, đối soát đã được nghiệm thu.
 
 ## Nâng phiên bản nền tảng

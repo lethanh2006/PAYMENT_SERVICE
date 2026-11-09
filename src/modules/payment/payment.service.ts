@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   ForbiddenException,
@@ -6,8 +6,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { logException } from '@nrapp/observability';
 
 import type { AuthenticatedUser } from '../../common/interfaces/request-context.interface';
+import { appLogger } from '../../common/logging/logger';
 import { userIdOf } from '../../common/utils/user.util';
 import {
   PaymentEntity,
@@ -15,42 +17,41 @@ import {
   PaymentProvider,
   PaymentStatus,
 } from '../../database/entities/payment.entity';
-import {
-  CassoSignatureService,
-  sortCassoPayload,
-} from './casso-signature.service';
 import type { CreatePaymentQrDto } from './dto/create-payment-qr.dto';
 import {
-  type CassoProcessingResult,
   PaymentRepository,
+  type WebhookProcessingResult,
 } from './payment.repository';
-import { VietQrService } from './vietqr.service';
+import { payosDataString } from './payos-signature';
+import { PayosClient } from './payos.client';
 
-interface CassoTransaction {
-  id: string | number;
-  reference?: unknown;
-  description: string;
-  amount: number;
-  accountNumber: string;
-  transactionDateTime?: unknown;
-  bankAbbreviation?: unknown;
-  bankName?: unknown;
-}
+// Tài khoản ngân hàng chưa liên kết qua PayOS chỉ nhận nội dung chuyển khoản tối đa 9 ký tự.
+const MAX_DESCRIPTION_LENGTH = 9;
+// PayOS gửi thời gian giao dịch theo giờ Việt Nam, không kèm múi giờ.
+const PAYOS_TIMEZONE_OFFSET = '+07:00';
 
-interface CassoWebhookPayload {
-  error: number | string;
-  data: CassoTransaction | CassoTransaction[];
+/** Một lần tiền về trên link PayOS, đến từ webhook hoặc từ đối soát. */
+export interface PayosTransactionData {
+  orderCode: unknown;
+  paymentLinkId: unknown;
+  reference: unknown;
+  amount: unknown;
+  transactionDateTime: unknown;
+  counterAccountBankName?: unknown;
+  counterAccountName?: unknown;
 }
 
 export interface PaymentResponse {
   paymentId: string;
   orderId: string;
+  orderCode: number;
   amount: number;
   currency: string;
   status: PaymentStatus;
   paymentMethod: PaymentMethod;
-  qrUrl: string;
-  transferContent: string;
+  checkoutUrl: string | null;
+  qrCode: string;
+  description: string;
   expiresAt: string;
   paidAt: string | null;
   createdAt: string;
@@ -60,12 +61,10 @@ export interface PaymentResponse {
 export class PaymentService {
   private readonly intentTtlMs: number;
   private readonly paymentCodePrefix: string;
-  private readonly cassoTimezoneOffset: string;
 
   constructor(
     private readonly payments: PaymentRepository,
-    private readonly vietQrService: VietQrService,
-    private readonly cassoSignatureService: CassoSignatureService,
+    private readonly payosClient: PayosClient,
     configService: ConfigService,
   ) {
     const ttlMinutes = Number(
@@ -79,19 +78,12 @@ export class PaymentService {
     const prefix = (configService.get<string>('PAYMENT_CODE_PREFIX') ?? 'NRP')
       .trim()
       .toUpperCase();
-    if (!/^[A-Z0-9]{2,8}$/.test(prefix)) {
+    if (!/^[A-Z0-9]{2,6}$/.test(prefix)) {
       throw new Error(
-        'PAYMENT_CODE_PREFIX chỉ được gồm 2-8 ký tự A-Z hoặc 0-9',
+        'PAYMENT_CODE_PREFIX chỉ được gồm 2-6 ký tự A-Z hoặc 0-9',
       );
     }
     this.paymentCodePrefix = prefix;
-
-    const timezone =
-      configService.get<string>('CASSO_TIMEZONE_OFFSET')?.trim() ?? '+07:00';
-    if (!/^[+-]\d{2}:\d{2}$/.test(timezone)) {
-      throw new Error('CASSO_TIMEZONE_OFFSET phải có dạng +07:00');
-    }
-    this.cassoTimezoneOffset = timezone;
   }
 
   async createQr(
@@ -99,12 +91,24 @@ export class PaymentService {
     user: AuthenticatedUser | undefined,
   ): Promise<PaymentResponse> {
     this.assertCanCreateForOrder(dto.orderUserId, user);
-    const paymentCode = `${this.paymentCodePrefix}${randomBytes(8)
-      .toString('hex')
-      .toUpperCase()}`;
-    const qrUrl = this.vietQrService.buildQrUrl({
+    const active = await this.payments.findActiveForOrder(dto.orderId);
+    if (
+      active &&
+      (active.status === PaymentStatus.SUCCESS ||
+        (active.amount === dto.amount && active.userId === dto.orderUserId))
+    ) {
+      this.assertCanRead(active, user);
+      return this.toResponse(active);
+    }
+
+    const orderCode = this.nextOrderCode();
+    const description = this.describe(orderCode);
+    const expiresAt = new Date(Date.now() + this.intentTtlMs);
+    const link = await this.payosClient.createPaymentLink({
+      orderCode,
       amount: dto.amount,
-      reference: paymentCode,
+      description,
+      expiresAt,
     });
 
     const candidate = new PaymentEntity();
@@ -112,25 +116,40 @@ export class PaymentService {
       id: randomUUID(),
       orderId: dto.orderId,
       userId: dto.orderUserId,
-      paymentCode,
+      paymentCode: String(orderCode),
       amount: dto.amount,
       currency: 'VND',
       status: PaymentStatus.PENDING,
-      paymentMethod: PaymentMethod.VIETQR,
-      provider: PaymentProvider.CASSO,
-      transferDescription:
-        this.vietQrService.buildTransferDescription(paymentCode),
-      qrUrl,
-      destinationAccount: this.vietQrService.getDestinationAccount(),
+      paymentMethod: PaymentMethod.PAYOS,
+      provider: PaymentProvider.PAYOS,
+      transferDescription: description,
+      qrCode: link.qrCode,
+      checkoutUrl: link.checkoutUrl,
+      paymentLinkId: link.paymentLinkId,
+      destinationAccount: link.accountNumber,
       providerTransactionId: null,
       providerReference: null,
       providerMetadata: null,
       reviewReason: null,
-      expiresAt: new Date(Date.now() + this.intentTtlMs),
+      expiresAt,
       paidAt: null,
+      providerStatus: null,
+      reconciledAt: null,
     });
 
-    const payment = await this.payments.createOrReuse(candidate);
+    const { payment, supersededLinkId } =
+      await this.payments.createOrReuse(candidate);
+    if (payment.id !== candidate.id) {
+      // Request song song đã tạo link khác cho đơn này; huỷ link thừa để khách không trả nhầm.
+      void this.cancelLink(
+        link.paymentLinkId,
+        'Đơn hàng đã có link thanh toán khác',
+      );
+    }
+    if (supersededLinkId) {
+      // Link cũ còn hạn nhưng đơn đã đổi số tiền hoặc chủ đơn: khoá nó để khách không trả theo link cũ.
+      void this.cancelLink(supersededLinkId, 'Link đã được thay bằng link mới');
+    }
     this.assertCanRead(payment, user);
     return this.toResponse(payment);
   }
@@ -168,203 +187,124 @@ export class PaymentService {
     return payments.map((payment) => this.toResponse(payment));
   }
 
-  async handleCassoWebhook(
+  async handlePayosWebhook(
     payload: unknown,
-    signatureHeader: string | undefined,
     requestId: string | undefined,
-  ): Promise<CassoProcessingResult[]> {
-    if (!this.cassoSignatureService.verify(signatureHeader, payload)) {
-      throw new ForbiddenException('Chữ ký Casso không hợp lệ');
+  ): Promise<WebhookProcessingResult> {
+    const data = this.payosClient.verifyWebhook(payload);
+    if (!data) {
+      throw new BadRequestException('Chữ ký PayOS không hợp lệ');
     }
+    const succeeded =
+      (payload as Record<string, unknown>).code === '00' && data.code === '00';
 
-    const webhook = this.parseWebhook(payload);
-    if (Number(webhook.error) !== 0) {
-      throw new BadRequestException('Casso báo webhook có lỗi');
-    }
-
-    const transactions = Array.isArray(webhook.data)
-      ? webhook.data
-      : [webhook.data];
-    if (transactions.length === 0 || transactions.length > 100) {
-      throw new BadRequestException('Số lượng giao dịch webhook không hợp lệ');
-    }
-
-    const signatureTimestamp = this.signatureTimestamp(signatureHeader);
-    const results: CassoProcessingResult[] = [];
-    for (const transaction of transactions) {
-      const parsed = this.parseTransaction(transaction);
-      results.push(
-        await this.payments.processCassoTransaction({
-          providerEventId: parsed.providerEventId,
-          paymentCode: this.extractPaymentCode(parsed.description) ?? '',
-          amount: parsed.amount,
-          destinationAccount: parsed.accountNumber,
-          providerReference: parsed.providerReference,
-          payloadHash: this.hashTransaction(transaction),
-          signatureTimestamp,
-          metadata: parsed.metadata,
-          paidAt: parsed.paidAt,
-          providerValidationError: parsed.providerValidationError,
-          requestId: requestId ?? null,
-        }),
-      );
-    }
-    return results;
-  }
-
-  private parseWebhook(value: unknown): CassoWebhookPayload {
-    if (!value || typeof value !== 'object') {
-      throw new BadRequestException('Payload Casso không hợp lệ');
-    }
-    const record = value as Record<string, unknown>;
-    if (record.error === undefined || record.data === undefined) {
-      throw new BadRequestException('Payload Casso thiếu error hoặc data');
-    }
-    return value as CassoWebhookPayload;
-  }
-
-  private parseTransaction(value: unknown): {
-    providerEventId: string;
-    description: string;
-    amount: number;
-    accountNumber: string;
-    providerReference: string | null;
-    paidAt: Date | null;
-    providerValidationError: string | null;
-    metadata: Record<string, unknown>;
-  } {
-    if (!value || typeof value !== 'object') {
-      throw new BadRequestException('Dữ liệu giao dịch Casso không hợp lệ');
-    }
-    const transaction = value as CassoTransaction;
-    const providerEventId = String(transaction.id ?? '').trim();
-    if (!providerEventId || providerEventId.length > 128) {
-      throw new BadRequestException('Mã giao dịch Casso không hợp lệ');
-    }
-    if (typeof transaction.description !== 'string') {
-      throw new BadRequestException(
-        'Giao dịch Casso thiếu nội dung chuyển khoản',
-      );
-    }
-    if (!Number.isSafeInteger(transaction.amount) || transaction.amount === 0) {
-      throw new BadRequestException('Số tiền giao dịch Casso không hợp lệ');
-    }
-
-    const accountNumber =
-      typeof transaction.accountNumber === 'string'
-        ? transaction.accountNumber
-        : '';
-    const providerReference =
-      typeof transaction.reference === 'string'
-        ? transaction.reference.slice(0, 160)
-        : null;
-    const transactionDateTime =
-      typeof transaction.transactionDateTime === 'string'
-        ? transaction.transactionDateTime.trim()
-        : null;
-    const paidAt = this.parseTransactionDate(transactionDateTime);
-
-    return {
-      providerEventId,
-      description: transaction.description,
-      amount: transaction.amount,
-      accountNumber,
-      providerReference,
-      paidAt,
-      providerValidationError: paidAt
-        ? null
-        : 'Thời gian giao dịch Casso không hợp lệ',
-      metadata: {
-        ...(transactionDateTime
-          ? { transactionDateTime: transactionDateTime.slice(0, 64) }
-          : {}),
-        ...(typeof transaction.bankAbbreviation === 'string'
-          ? { bankAbbreviation: transaction.bankAbbreviation.slice(0, 20) }
-          : {}),
-        ...(typeof transaction.bankName === 'string'
-          ? { bankName: transaction.bankName.slice(0, 80) }
-          : {}),
+    return this.recordPayosTransaction(
+      {
+        orderCode: data.orderCode,
+        paymentLinkId: data.paymentLinkId,
+        reference: data.reference,
+        amount: data.amount,
+        transactionDateTime: data.transactionDateTime,
+        counterAccountBankName: data.counterAccountBankName,
+        counterAccountName: data.counterAccountName,
       },
-    };
+      succeeded ? null : 'PayOS báo giao dịch không thành công',
+      requestId ?? null,
+    );
   }
 
-  private extractPaymentCode(description: string): string | null {
-    let decoded = description;
+  /**
+   * Ghi một lần tiền về, từ webhook hay từ đối soát, qua cùng một đường idempotent: mã sự kiện
+   * `<paymentLinkId>:<reference>` giống nhau ở hai nguồn, nên giao dịch nào cũng chỉ được ghi một lần.
+   */
+  async recordPayosTransaction(
+    transaction: PayosTransactionData,
+    providerValidationError: string | null,
+    requestId: string | null,
+  ): Promise<WebhookProcessingResult> {
+    const { orderCode, amount } = transaction;
+    if (!Number.isSafeInteger(orderCode) || (orderCode as number) <= 0) {
+      throw new BadRequestException('orderCode PayOS không hợp lệ');
+    }
+    if (!Number.isSafeInteger(amount) || (amount as number) <= 0) {
+      throw new BadRequestException('Số tiền PayOS không hợp lệ');
+    }
+    const reference = text(transaction.reference, 160);
+    const paymentLinkId = text(transaction.paymentLinkId, 64);
+    const transactionDateTime = text(transaction.transactionDateTime, 64);
+    const counterAccountBankName = text(transaction.counterAccountBankName, 80);
+    const counterAccountName = text(transaction.counterAccountName, 80);
+
+    return this.payments.processPayosTransaction({
+      providerEventId:
+        `${paymentLinkId ?? ''}:${reference ?? String(orderCode)}`.slice(
+          0,
+          128,
+        ),
+      paymentCode: String(orderCode),
+      amount: amount as number,
+      providerReference: reference,
+      // Băm các trường cốt lõi mà webhook và API tra cứu đều có, để cùng giao dịch cho cùng mã băm.
+      payloadHash: createHash('sha256')
+        .update(
+          payosDataString({
+            amount,
+            orderCode,
+            paymentLinkId,
+            reference,
+            transactionDateTime,
+          }),
+          'utf8',
+        )
+        .digest('hex'),
+      metadata: {
+        ...(paymentLinkId ? { paymentLinkId } : {}),
+        ...(transactionDateTime ? { transactionDateTime } : {}),
+        ...(counterAccountBankName ? { counterAccountBankName } : {}),
+        ...(counterAccountName ? { counterAccountName } : {}),
+      },
+      paidAt: parsePayosDate(transactionDateTime) ?? new Date(),
+      providerValidationError,
+      requestId,
+    });
+  }
+
+  /** Số nguyên duy nhất PayOS yêu cầu cho mỗi link: giây hiện tại ghép 5 chữ số ngẫu nhiên. */
+  private nextOrderCode(): number {
+    return Math.floor(Date.now() / 1000) * 100_000 + randomInt(100_000);
+  }
+
+  private describe(orderCode: number): string {
+    const tail = String(orderCode).slice(
+      -(MAX_DESCRIPTION_LENGTH - this.paymentCodePrefix.length),
+    );
+    return `${this.paymentCodePrefix}${tail}`;
+  }
+
+  private async cancelLink(
+    paymentLinkId: string,
+    reason: string,
+  ): Promise<void> {
     try {
-      decoded = decodeURIComponent(description.replace(/\+/g, '%20'));
-    } catch {
-      decoded = description.replace(/%20/gi, ' ');
+      await this.payosClient.cancelPaymentLink(paymentLinkId, reason);
+    } catch (error: unknown) {
+      logException(
+        appLogger,
+        'payment.payos.cancel.failed',
+        error,
+        { 'payment.link_id': paymentLinkId },
+        {
+          message: 'Không huỷ được link PayOS thừa',
+          classification: {
+            statusCode: 502,
+            code: 'PAYOS_CANCEL_FAILED',
+            expected: true,
+            retryable: true,
+            logLevel: 'warn',
+          },
+        },
+      );
     }
-    const normalized = decoded.normalize('NFKC').toUpperCase();
-    const expectedLength = this.paymentCodePrefix.length + 16;
-    return (
-      normalized
-        .split(/[^A-Z0-9]+/)
-        .find(
-          (part) =>
-            part.length === expectedLength &&
-            part.startsWith(this.paymentCodePrefix) &&
-            /^[A-Z0-9]+$/.test(part),
-        ) ?? null
-    );
-  }
-
-  private signatureTimestamp(header: string | undefined): string | null {
-    return header?.match(/(?:^|,)\s*t=(\d+)/)?.[1] ?? null;
-  }
-
-  private hashTransaction(transaction: unknown): string {
-    let canonicalTransaction: string | undefined;
-    try {
-      canonicalTransaction = JSON.stringify(sortCassoPayload(transaction));
-    } catch {
-      throw new BadRequestException('Không thể chuẩn hóa giao dịch Casso');
-    }
-    if (canonicalTransaction === undefined) {
-      throw new BadRequestException('Không thể chuẩn hóa giao dịch Casso');
-    }
-    return createHash('sha256')
-      .update(canonicalTransaction, 'utf8')
-      .digest('hex');
-  }
-
-  private parseTransactionDate(value: string | null): Date | null {
-    if (!value) {
-      return null;
-    }
-
-    const match = value.match(
-      /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|[+-]\d{2}:?\d{2})?$/,
-    );
-    if (!match) {
-      return null;
-    }
-    const [, yearText, monthText, dayText, hourText, minuteText, secondText] =
-      match;
-    const year = Number(yearText);
-    const month = Number(monthText);
-    const day = Number(dayText);
-    const hour = Number(hourText);
-    const minute = Number(minuteText);
-    const second = Number(secondText);
-    const calendarDate = new Date(Date.UTC(year, month - 1, day));
-    if (
-      calendarDate.getUTCFullYear() !== year ||
-      calendarDate.getUTCMonth() !== month - 1 ||
-      calendarDate.getUTCDate() !== day ||
-      hour > 23 ||
-      minute > 59 ||
-      second > 59
-    ) {
-      return null;
-    }
-
-    const isoLike = value.replace(' ', 'T');
-    const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(isoLike);
-    const parsed = new Date(
-      hasTimezone ? isoLike : `${isoLike}${this.cassoTimezoneOffset}`,
-    );
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
 
   private requireUserId(user: AuthenticatedUser | undefined): string {
@@ -409,15 +349,44 @@ export class PaymentService {
     return {
       paymentId: payment.id,
       orderId: payment.orderId,
+      orderCode: Number(payment.paymentCode),
       amount: payment.amount,
       currency: payment.currency,
       status: payment.status,
       paymentMethod: payment.paymentMethod,
-      qrUrl: payment.qrUrl,
-      transferContent: payment.transferDescription,
+      checkoutUrl: payment.checkoutUrl,
+      qrCode: payment.qrCode,
+      description: payment.transferDescription,
       expiresAt: payment.expiresAt.toISOString(),
       paidAt: payment.paidAt?.toISOString() ?? null,
       createdAt: payment.createdAt.toISOString(),
     };
   }
+}
+
+function text(value: unknown, maxLength: number): string | null {
+  return typeof value === 'string' && value.trim()
+    ? value.trim().slice(0, maxLength)
+    : null;
+}
+
+/** `2026-11-04 10:15:00` theo giờ Việt Nam; `null` nếu sai định dạng hoặc sai lịch. */
+export function parsePayosDate(value: string | null): Date | null {
+  const match = value?.match(
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/,
+  );
+  if (!match) {
+    return null;
+  }
+  const parsed = new Date(
+    `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}${PAYOS_TIMEZONE_OFFSET}`,
+  );
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    // Date tự cuộn ngày sai lịch (30/02 -> 02/03); so lại để bắt trường hợp đó.
+    new Date(parsed.getTime() + 7 * 3_600_000).getUTCDate() !== Number(match[3])
+  ) {
+    return null;
+  }
+  return parsed;
 }

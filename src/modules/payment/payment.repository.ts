@@ -1,6 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
-import { DataSource, EntityManager, LessThan, type QueryResult } from 'typeorm';
+import {
+  DataSource,
+  EntityManager,
+  LessThan,
+  MoreThan,
+  Not,
+  type QueryResult,
+} from 'typeorm';
 
 import { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
 import {
@@ -12,37 +19,56 @@ import {
   WebhookReceiptEntity,
 } from '../../database/entities/webhook-receipt.entity';
 
-export interface CassoTransactionInput {
+export interface PayosTransactionInput {
   providerEventId: string;
   paymentCode: string;
   amount: number;
-  destinationAccount: string;
   providerReference: string | null;
   payloadHash: string;
-  signatureTimestamp: string | null;
   metadata: Record<string, unknown>;
-  paidAt: Date | null;
+  paidAt: Date;
   providerValidationError: string | null;
   requestId: string | null;
 }
 
-export interface CassoProcessingResult {
+export interface WebhookProcessingResult {
   outcome: 'PROCESSED' | 'DUPLICATE' | 'REVIEW_REQUIRED';
   paymentId: string | null;
   reason?: string;
 }
 
+export interface CreateOrReuseResult {
+  payment: PaymentEntity;
+  /** Link PayOS cũ còn hạn vừa bị thay (đơn đổi số tiền hoặc chủ đơn), cần huỷ phía PayOS. */
+  supersededLinkId: string | null;
+}
+
+/** Trạng thái link phía PayOS mà đối soát còn phải hỏi lại; các trạng thái khác đã chốt. */
+const OPEN_PROVIDER_STATUSES = ['PENDING', 'PROCESSING'];
+
 @Injectable()
 export class PaymentRepository {
   constructor(private readonly dataSource: DataSource) {}
 
-  async createOrReuse(candidate: PaymentEntity): Promise<PaymentEntity> {
+  async createOrReuse(candidate: PaymentEntity): Promise<CreateOrReuseResult> {
     return this.dataSource.transaction(async (manager) => {
+      // Mọi request tạo link cho cùng một đơn chạy lần lượt (bấm hai lần, hai tab, khách và thu ngân).
       await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
         candidate.orderId,
       ]);
 
       const repository = manager.getRepository(PaymentEntity);
+      // Khoá dòng PENDING trước khi đọc SUCCESS: webhook ghi SUCCESS cũng khoá dòng này, nên hai
+      // bên chạy lần lượt. Đọc không khoá rồi ghi EXPIRED có thể đè lên SUCCESS webhook vừa commit.
+      const pending = await repository
+        .createQueryBuilder('payment')
+        .setLock('pessimistic_write')
+        .where('payment.order_id = :orderId', { orderId: candidate.orderId })
+        .andWhere('payment.status = :status', {
+          status: PaymentStatus.PENDING,
+        })
+        .orderBy('payment.created_at', 'DESC')
+        .getOne();
       const successful = await repository.findOne({
         where: {
           orderId: candidate.orderId,
@@ -51,31 +77,108 @@ export class PaymentRepository {
         order: { createdAt: 'DESC' },
       });
       if (successful) {
-        return successful;
+        return { payment: successful, supersededLinkId: null };
       }
 
-      const pending = await repository.findOne({
-        where: {
-          orderId: candidate.orderId,
-          status: PaymentStatus.PENDING,
-        },
-        order: { createdAt: 'DESC' },
-      });
+      const stillOpen =
+        pending !== null && pending.expiresAt.getTime() > Date.now();
       if (
-        pending &&
-        pending.expiresAt.getTime() > Date.now() &&
+        stillOpen &&
         pending.amount === candidate.amount &&
         pending.userId === candidate.userId
       ) {
-        return pending;
+        return { payment: pending, supersededLinkId: null };
       }
       if (pending) {
         pending.status = PaymentStatus.EXPIRED;
         await repository.save(pending);
       }
 
-      return repository.save(candidate);
+      return {
+        payment: await repository.save(candidate),
+        supersededLinkId: stillOpen ? pending.paymentLinkId : null,
+      };
     });
+  }
+
+  /**
+   * Payment PayOS chưa chốt mà webhook có thể đã lỡ: tạo đủ lâu để webhook kịp về, chưa quá cửa sổ
+   * đối soát, link phía PayOS chưa ở trạng thái cuối và lâu rồi chưa hỏi lại.
+   */
+  async findDueForReconciliation(input: {
+    createdBefore: Date;
+    createdAfter: Date;
+    checkedBefore: Date;
+    limit: number;
+  }): Promise<PaymentEntity[]> {
+    return this.dataSource
+      .getRepository(PaymentEntity)
+      .createQueryBuilder('payment')
+      .where('payment.status IN (:...statuses)', {
+        statuses: [PaymentStatus.PENDING, PaymentStatus.EXPIRED],
+      })
+      .andWhere('payment.payment_link_id IS NOT NULL')
+      .andWhere('payment.created_at < :createdBefore', {
+        createdBefore: input.createdBefore,
+      })
+      .andWhere('payment.created_at > :createdAfter', {
+        createdAfter: input.createdAfter,
+      })
+      .andWhere(
+        '(payment.provider_status IS NULL OR payment.provider_status IN (:...openStatuses))',
+        { openStatuses: OPEN_PROVIDER_STATUSES },
+      )
+      .andWhere(
+        '(payment.reconciled_at IS NULL OR payment.reconciled_at < :checkedBefore)',
+        { checkedBefore: input.checkedBefore },
+      )
+      .orderBy('payment.reconciled_at', 'ASC', 'NULLS FIRST')
+      .addOrderBy('payment.created_at', 'ASC')
+      .limit(input.limit)
+      .getMany();
+  }
+
+  /**
+   * Ghi kết quả đối soát. Chỉ đụng payment còn PENDING/EXPIRED: nếu webhook vừa ghi SUCCESS song
+   * song thì câu lệnh không làm gì, tránh đè trạng thái tiền đã về.
+   */
+  async recordProviderStatus(
+    paymentId: string,
+    providerStatus: string,
+    finalStatus: PaymentStatus.CANCELLED | PaymentStatus.EXPIRED | null,
+  ): Promise<void> {
+    await this.dataSource
+      .createQueryBuilder()
+      .update(PaymentEntity)
+      .set({
+        providerStatus,
+        reconciledAt: () => 'now()',
+        ...(finalStatus ? { status: finalStatus } : {}),
+      })
+      .where('id = :paymentId', { paymentId })
+      .andWhere('status IN (:...statuses)', {
+        statuses: [PaymentStatus.PENDING, PaymentStatus.EXPIRED],
+      })
+      .execute();
+  }
+
+  /** Payment đã trả, hoặc link còn hạn, để không tạo thêm link PayOS cho cùng một đơn. */
+  async findActiveForOrder(orderId: string): Promise<PaymentEntity | null> {
+    const payments = this.dataSource.getRepository(PaymentEntity);
+    return (
+      (await payments.findOne({
+        where: { orderId, status: PaymentStatus.SUCCESS },
+        order: { createdAt: 'DESC' },
+      })) ??
+      (await payments.findOne({
+        where: {
+          orderId,
+          status: PaymentStatus.PENDING,
+          expiresAt: MoreThan(new Date()),
+        },
+        order: { createdAt: 'DESC' },
+      }))
+    );
   }
 
   async findById(id: string): Promise<PaymentEntity | null> {
@@ -108,9 +211,9 @@ export class PaymentRepository {
     return result.affected ?? 0;
   }
 
-  async processCassoTransaction(
-    input: CassoTransactionInput,
-  ): Promise<CassoProcessingResult> {
+  async processPayosTransaction(
+    input: PayosTransactionInput,
+  ): Promise<WebhookProcessingResult> {
     return this.dataSource.transaction(async (manager) => {
       const receiptId = randomUUID();
       const queryRunner = manager.queryRunner;
@@ -123,16 +226,11 @@ export class PaymentRepository {
             id, provider, provider_event_id, payload_hash,
             signature_timestamp, status
           )
-          VALUES ($1, 'CASSO', $2, $3, $4, 'RECEIVED')
+          VALUES ($1, 'PAYOS', $2, $3, NULL, 'RECEIVED')
           ON CONFLICT (provider, provider_event_id) DO NOTHING
           RETURNING id
         `,
-        [
-          receiptId,
-          input.providerEventId,
-          input.payloadHash,
-          input.signatureTimestamp,
-        ],
+        [receiptId, input.providerEventId, input.payloadHash],
         true,
       );
       const insertResult = rawInsertResult as QueryResult<{ id: string }>;
@@ -142,7 +240,7 @@ export class PaymentRepository {
           .getRepository(WebhookReceiptEntity)
           .findOne({
             where: {
-              provider: 'CASSO',
+              provider: 'PAYOS',
               providerEventId: input.providerEventId,
             },
           });
@@ -180,7 +278,16 @@ export class PaymentRepository {
         };
       }
 
-      const validationError = validateCassoTransaction(payment, input);
+      const otherSuccess = await manager.getRepository(PaymentEntity).exists({
+        where: {
+          orderId: payment.orderId,
+          status: PaymentStatus.SUCCESS,
+          id: Not(payment.id),
+        },
+      });
+      const validationError = otherSuccess
+        ? 'Đơn hàng đã được thanh toán bằng một giao dịch khác'
+        : validatePayosTransaction(payment, input);
       if (validationError) {
         await this.finishReceipt(
           manager,
@@ -197,10 +304,6 @@ export class PaymentRepository {
       }
 
       const paidAt = input.paidAt;
-      if (!paidAt) {
-        throw new Error('Thiếu thời gian giao dịch sau bước kiểm tra provider');
-      }
-
       payment.status = PaymentStatus.SUCCESS;
       payment.providerTransactionId = input.providerEventId;
       payment.providerReference = input.providerReference;
@@ -268,9 +371,10 @@ export class PaymentRepository {
   }
 }
 
-export function validateCassoTransaction(
+/** Lỗi khiến giao dịch phải đối soát tay; `null` nếu được ghi nhận thành công. */
+export function validatePayosTransaction(
   payment: PaymentEntity,
-  input: CassoTransactionInput,
+  input: PayosTransactionInput,
 ): string | null {
   if (input.providerValidationError) {
     return input.providerValidationError;
@@ -278,24 +382,16 @@ export function validateCassoTransaction(
   if (payment.status === PaymentStatus.SUCCESS) {
     return 'Thanh toán đã thành công bằng một giao dịch khác';
   }
-  if (payment.status !== PaymentStatus.PENDING) {
+  // PayOS tự khoá link theo expiredAt, nên tiền về sau khi worker đánh dấu EXPIRED vẫn
+  // là tiền hợp lệ của link này và phải được ghi nhận.
+  if (
+    payment.status !== PaymentStatus.PENDING &&
+    payment.status !== PaymentStatus.EXPIRED
+  ) {
     return `Thanh toán đang ở trạng thái ${payment.status}`;
-  }
-  if (payment.expiresAt.getTime() <= Date.now()) {
-    return 'Thanh toán đã hết hạn';
   }
   if (payment.amount !== input.amount) {
     return `Số tiền thực nhận ${input.amount} không khớp số tiền đơn hàng`;
   }
-  if (
-    normalizeAccount(payment.destinationAccount) !==
-    normalizeAccount(input.destinationAccount)
-  ) {
-    return 'Giao dịch không thuộc tài khoản nhận tiền đã cấu hình';
-  }
   return null;
-}
-
-function normalizeAccount(value: string): string {
-  return value.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 }

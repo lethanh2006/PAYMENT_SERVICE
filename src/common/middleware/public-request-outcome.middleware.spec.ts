@@ -34,7 +34,7 @@ describe('PublicRequestOutcomeMiddleware', () => {
     expect(infoSpy).toHaveBeenCalledTimes(1);
     expect(infoSpy.mock.calls[0][0]).toMatchObject({
       'event.name': 'http.request.rejected',
-      'http.route': '/api/payment/webhooks/casso',
+      'http.route': '/api/payment/webhooks/payos',
       'http.response.status_code': 422,
       'error.code': 'VALIDATION_ERROR',
       'validation.fields': ['amount'],
@@ -53,7 +53,7 @@ function createMiddleware(value: string | undefined) {
 function createRequest() {
   return {
     method: 'POST',
-    path: '/api/payment/webhooks/casso',
+    path: '/api/payment/webhooks/payos',
     requestId: 'req-public',
   } as unknown as Request & { requestId?: string };
 }

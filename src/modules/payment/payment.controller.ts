@@ -17,8 +17,8 @@ import { PaymentHistoryQueryDto } from './dto/payment-history-query.dto';
 import { PaymentService } from './payment.service';
 
 /**
- * Thanh toán chuyển khoản VietQR: tạo mã QR cho đơn và tra cứu lịch sử thanh toán (hiện chưa
- * bật).
+ * Thanh toán đơn căn tin qua PayOS: Gateway tạo link/QR sau khi đã đối chiếu đơn với Canteen,
+ * người dùng tra cứu trạng thái và lịch sử thanh toán của mình.
  */
 @Controller('api/payment')
 @UseGuards(GatewayAuthGuard)

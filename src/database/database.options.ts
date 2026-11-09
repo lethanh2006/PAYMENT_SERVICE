@@ -7,6 +7,8 @@ import { WebhookReceiptEntity } from './entities/webhook-receipt.entity';
 import { InitialPaymentSchema1724000000000 } from './migrations/1724000000000-initial-payment-schema';
 import { AddOutboxObservability1724000001000 } from './migrations/1724000001000-add-outbox-observability';
 import { RemoveOutboxTraceColumns1724000002000 } from './migrations/1724000002000-remove-outbox-trace-columns';
+import { SwitchToPayos1724000003000 } from './migrations/1724000003000-switch-to-payos';
+import { AddPayosReconciliation1724000004000 } from './migrations/1724000004000-add-payos-reconciliation';
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value ?? fallback);
@@ -40,6 +42,8 @@ export function paymentDatabaseOptions(): TypeOrmModuleOptions &
       InitialPaymentSchema1724000000000,
       AddOutboxObservability1724000001000,
       RemoveOutboxTraceColumns1724000002000,
+      SwitchToPayos1724000003000,
+      AddPayosReconciliation1724000004000,
     ],
     migrationsRun:
       process.env.PAYMENT_DB_RUN_MIGRATIONS?.toLowerCase() !== 'false',

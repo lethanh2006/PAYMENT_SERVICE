@@ -4,8 +4,7 @@ const baseUrl = (
   process.env.PAYMENT_SMOKE_BASE_URL ?? 'http://127.0.0.1:5006'
 ).replace(/\/+$/, '');
 const internalSecret = required('PAYMENT_INTERNAL_SECRET');
-const cassoSecret = required('CASSO_WEBHOOK_SECRET');
-const destinationAccount = required('VIETQR_ACCOUNT_NUMBER');
+const checksumKey = required('PAYOS_CHECKSUM_KEY');
 const amount = positiveInteger(process.env.PAYMENT_SMOKE_AMOUNT ?? '125000');
 const orderId =
   process.env.PAYMENT_SMOKE_ORDER_ID ?? randomBytes(12).toString('hex');
@@ -40,27 +39,19 @@ assert(createResponse.ok, `Tạo QR thất bại: ${JSON.stringify(created)}`);
 assert(created.status === 'PENDING', 'Payment mới phải ở trạng thái PENDING');
 assert(created.amount === amount, 'Payment không lưu đúng amount');
 
-const paymentCode = String(created.transferContent ?? '')
-  .trim()
-  .split(/\s+/)
-  .at(-1);
-assert(paymentCode, 'Không lấy được payment code từ transferContent');
+assert(
+  Number.isSafeInteger(created.orderCode) && created.checkoutUrl,
+  'Payment mới phải có orderCode và checkoutUrl của PayOS',
+);
 
-const mismatchWebhook = {
-  error: 0,
-  data: {
-    id: `smoke-mismatch-${randomUUID()}`,
-    reference: `SMOKE-MISMATCH-${randomUUID()}`,
-    description: `SMOKE PREFIX ${paymentCode} SMOKE SUFFIX`,
-    amount: amount + 1,
-    accountNumber: destinationAccount,
-    transactionDateTime: new Date().toISOString(),
-    bankAbbreviation: 'SMOKE',
-  },
-};
-const mismatchResponse = await fetch(`${baseUrl}/api/payment/webhooks/casso`, {
+const mismatchWebhook = payosWebhook({
+  orderCode: created.orderCode,
+  amount: amount + 1,
+  reference: `SMOKE-MISMATCH-${randomUUID()}`,
+});
+const mismatchResponse = await fetch(`${baseUrl}/api/payment/webhooks/payos`, {
   method: 'POST',
-  headers: cassoHeaders(mismatchWebhook),
+  headers: { 'content-type': 'application/json' },
   body: JSON.stringify(mismatchWebhook),
 });
 const mismatchResult = await json(mismatchResponse);
@@ -79,31 +70,20 @@ assert(
   `Webhook sai tiền không được khóa intent: ${JSON.stringify(pending)}`,
 );
 
-const webhook = {
-  error: 0,
-  data: {
-    id: `smoke-${randomUUID()}`,
-    reference: `SMOKE-${randomUUID()}`,
-    description: `SMOKE PREFIX ${paymentCode} SMOKE SUFFIX`,
-    amount,
-    accountNumber: destinationAccount,
-    transactionDateTime: new Date().toISOString(),
-    bankAbbreviation: 'SMOKE',
-  },
-};
-const webhookHeaders = cassoHeaders(webhook);
-const webhookResponses = await Promise.all([
-  fetch(`${baseUrl}/api/payment/webhooks/casso`, {
-    method: 'POST',
-    headers: webhookHeaders,
-    body: JSON.stringify(webhook),
-  }),
-  fetch(`${baseUrl}/api/payment/webhooks/casso`, {
-    method: 'POST',
-    headers: webhookHeaders,
-    body: JSON.stringify(webhook),
-  }),
-]);
+const webhook = payosWebhook({
+  orderCode: created.orderCode,
+  amount,
+  reference: `SMOKE-${randomUUID()}`,
+});
+const webhookResponses = await Promise.all(
+  [1, 2].map(() =>
+    fetch(`${baseUrl}/api/payment/webhooks/payos`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(webhook),
+    }),
+  ),
+);
 const webhookResults = await Promise.all(webhookResponses.map(json));
 assert(
   webhookResponses.every((response) => response.ok),
@@ -163,14 +143,33 @@ function gatewayHeaders(requestId, context) {
   };
 }
 
-function cassoHeaders(payload) {
-  const timestamp = Date.now().toString();
-  const signature = createHmac('sha512', cassoSecret)
-    .update(`${timestamp}.${JSON.stringify(sortValue(payload))}`)
-    .digest('hex');
+/** Webhook giống PayOS gửi, ký bằng checksum key theo chuỗi `key=value` sắp theo khoá. */
+function payosWebhook({ orderCode, amount: paidAmount, reference }) {
+  const data = {
+    orderCode,
+    amount: paidAmount,
+    description: 'SMOKE',
+    accountNumber: '0000000000',
+    reference,
+    transactionDateTime: new Date(Date.now() + 7 * 3_600_000)
+      .toISOString()
+      .slice(0, 19)
+      .replace('T', ' '),
+    currency: 'VND',
+    paymentLinkId: `smoke-${orderCode}`,
+    code: '00',
+    desc: 'success',
+  };
+  const signed = Object.keys(data)
+    .sort()
+    .map((key) => `${key}=${data[key]}`)
+    .join('&');
   return {
-    'content-type': 'application/json',
-    'x-casso-signature': `t=${timestamp},v1=${signature}`,
+    code: '00',
+    desc: 'success',
+    success: true,
+    data,
+    signature: createHmac('sha256', checksumKey).update(signed).digest('hex'),
   };
 }
 
@@ -181,21 +180,6 @@ function createContext(targetOrderId, targetOrderUserId, targetAmount) {
     targetOrderUserId,
     targetAmount,
   ]);
-}
-
-function sortValue(value) {
-  if (Array.isArray(value)) {
-    return value.map(sortValue);
-  }
-  if (value !== null && typeof value === 'object') {
-    return Object.keys(value)
-      .sort()
-      .reduce((sorted, key) => {
-        sorted[key] = sortValue(value[key]);
-        return sorted;
-      }, {});
-  }
-  return value;
 }
 
 async function json(response) {

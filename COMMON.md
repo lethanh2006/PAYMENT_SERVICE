@@ -8,7 +8,7 @@ controller → `PaymentService` → repository PostgreSQL. Guard kiểm tra ch�
 và gắn `request.user`; `create-qr` ký cả thông tin đơn hàng và số tiền.
 
 Webhook công khai: `PublicRequestIdMiddleware` → `PublicRequestOutcomeMiddleware`
-→ controller → service kiểm tra chữ ký Casso. Nhánh này tạo request ID mới,
+→ controller → service kiểm tra chữ ký PayOS. Nhánh này tạo request ID mới,
 không tin request ID của caller như nhánh Gateway. Middleware ghi rejection chỉ
 khi bật `PAYMENT_PUBLIC_ENTRY_LOG_REJECTIONS=true`.
 
@@ -22,14 +22,16 @@ khi bật `PAYMENT_PUBLIC_ENTRY_LOG_REJECTIONS=true`.
 | `logging` | Khởi tạo logger Payment, adapter Nest và flush khi dừng service. |
 | `utils` | Lấy user ID và tạo lỗi validation 422 với tên field an toàn. |
 
-Nghiệp vụ VietQR, chữ ký Casso và worker hết hạn nằm trong `modules/payment`.
+Nghiệp vụ PayOS (client API, chữ ký checksum), worker hết hạn và worker đối soát
+với PayOS nằm trong `modules/payment`. Webhook và đối soát cùng ghi tiền qua
+`PaymentService.recordPayosTransaction`; khóa, idempotency và điều kiện bảo vệ nằm
+trong `PaymentRepository`. Giải thích đầy đủ: [PAYMENT.md](PAYMENT.md).
 Transaction và migrations nằm trong `database`; phát sự kiện thanh toán
 nằm trong `modules/outbox` và `modules/rabbitmq`.
 
-Theo `backend/compose.vps.yaml`, Payment và PostgreSQL dành cho Payment thuộc
-profile `payment-later`, chưa bật trong nhóm service VPS đang dùng vì Casso
-chưa khả dụng. Code API và migrations vẫn cần giữ để bảo toàn tích hợp và dữ
-liệu khi bật lại. Không có thay đổi cấu hình triển khai trong lần sắp xếp này.
+Gateway mở các route `/api/payment/*` và chuyển webhook PayOS tới đây. Trong
+`backend/compose.vps.yaml`, Payment và PostgreSQL của nó vẫn ở profile
+`payment-later`; phải bật profile này (và cấu hình PayOS) trước khi dùng trên server.
 
 `@nrapp/observability` từ repo Logger cung cấp logger và request ID dùng chung.
 Chỉ tạo thư mục khi có code dùng thật; test đặt cạnh file được kiểm tra.

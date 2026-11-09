@@ -36,9 +36,7 @@ import { GatewaySignatureService } from '../common/security/gateway-signature.se
 export class CoreModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
     const publicRoutes = [
-      { path: 'webhook/casso', method: RequestMethod.POST },
-      { path: 'api/payment/webhooks/casso', method: RequestMethod.POST },
-      { path: 'api/payment/callback', method: RequestMethod.POST },
+      { path: 'api/payment/webhooks/payos', method: RequestMethod.POST },
     ];
 
     consumer

@@ -29,22 +29,22 @@ describe('Payment request correlation contract', () => {
 
   it('tạo canonical request ID mới cho webhook và giữ ID an toàn của caller', () => {
     const result = runMiddleware(new PublicRequestIdMiddleware(), {
-      [REQUEST_ID_HEADER]: 'casso-request-123',
+      [REQUEST_ID_HEADER]: 'payos-request-123',
       [CLIENT_REQUEST_ID_HEADER]: 'khong-duoc-tin-cay',
     });
 
     expect(result.request.requestId).toMatch(SAFE_REQUEST_ID);
-    expect(result.request.requestId).not.toBe('casso-request-123');
-    expect(result.request.clientRequestId).toBe('casso-request-123');
+    expect(result.request.requestId).not.toBe('payos-request-123');
+    expect(result.request.clientRequestId).toBe('payos-request-123');
     expect(result.request.headers[REQUEST_ID_HEADER]).toBe(
       result.request.requestId,
     );
     expect(result.request.headers[CLIENT_REQUEST_ID_HEADER]).toBe(
-      'casso-request-123',
+      'payos-request-123',
     );
     expect(result.context).toMatchObject({
       request_id: result.request.requestId,
-      client_request_id: 'casso-request-123',
+      client_request_id: 'payos-request-123',
     });
   });
 

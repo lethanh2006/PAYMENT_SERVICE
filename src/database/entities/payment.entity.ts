@@ -12,16 +12,17 @@ export enum PaymentStatus {
   SUCCESS = 'SUCCESS',
   FAILED = 'FAILED',
   EXPIRED = 'EXPIRED',
+  CANCELLED = 'CANCELLED',
   REVIEW_REQUIRED = 'REVIEW_REQUIRED',
   REFUNDED = 'REFUNDED',
 }
 
 export enum PaymentMethod {
-  VIETQR = 'VIETQR',
+  PAYOS = 'PAYOS',
 }
 
 export enum PaymentProvider {
-  CASSO = 'CASSO',
+  PAYOS = 'PAYOS',
 }
 
 const bigintNumberTransformer = {
@@ -60,18 +61,29 @@ export class PaymentEntity {
     name: 'payment_method',
     type: 'varchar',
     length: 24,
-    default: PaymentMethod.VIETQR,
+    default: PaymentMethod.PAYOS,
   })
   paymentMethod: PaymentMethod;
 
-  @Column({ type: 'varchar', length: 24, default: PaymentProvider.CASSO })
+  @Column({ type: 'varchar', length: 24, default: PaymentProvider.PAYOS })
   provider: PaymentProvider;
 
   @Column({ name: 'transfer_description', type: 'varchar', length: 160 })
   transferDescription: string;
 
-  @Column({ name: 'qr_url', type: 'text' })
-  qrUrl: string;
+  @Column({ name: 'qr_code', type: 'text' })
+  qrCode: string;
+
+  @Column({ name: 'checkout_url', type: 'text', nullable: true })
+  checkoutUrl: string | null;
+
+  @Column({
+    name: 'payment_link_id',
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+  })
+  paymentLinkId: string | null;
 
   @Column({ name: 'destination_account', type: 'varchar', length: 64 })
   destinationAccount: string;
@@ -108,6 +120,18 @@ export class PaymentEntity {
 
   @Column({ name: 'paid_at', type: 'timestamptz', nullable: true })
   paidAt: Date | null;
+
+  /** Trạng thái link phía PayOS ở lần đối soát gần nhất; `null` nếu chưa đối soát. */
+  @Column({
+    name: 'provider_status',
+    type: 'varchar',
+    length: 24,
+    nullable: true,
+  })
+  providerStatus: string | null;
+
+  @Column({ name: 'reconciled_at', type: 'timestamptz', nullable: true })
+  reconciledAt: Date | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
