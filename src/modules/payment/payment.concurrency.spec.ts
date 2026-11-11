@@ -16,6 +16,7 @@ import {
   PaymentRepository,
   type PayosTransactionInput,
 } from './payment.repository';
+import { RefundRepository } from './refund.repository';
 
 /**
  * Giao dịch đồng thời trên PostgreSQL thật: chỉ chạy khi đặt PAYMENT_TEST_DATABASE_URL tới một
@@ -79,6 +80,7 @@ describeWithDatabase(
     const databaseName = `payment_test_${randomUUID().replaceAll('-', '')}`;
     let dataSource: DataSource;
     let payments: PaymentRepository;
+    let refunds: RefundRepository;
 
     const outboxCount = (paymentId: string) =>
       dataSource
@@ -118,6 +120,7 @@ describeWithDatabase(
       await dataSource.initialize();
       await dataSource.runMigrations();
       payments = new PaymentRepository(dataSource);
+      refunds = new RefundRepository(dataSource);
     });
 
     afterAll(async () => {
@@ -273,6 +276,88 @@ describeWithDatabase(
           [PaymentStatus.CANCELLED, 0, 'REVIEW_REQUIRED'],
         ]).toContainEqual([status, events, webhook.outcome]);
       }
+    });
+
+    it('tiền về phải hoàn mở đúng một hồ sơ, webhook trùng không mở thêm', async () => {
+      const { payment } = await payments.createOrReuse(
+        candidate(`order-${randomUUID()}`),
+      );
+      await payments.processPayosTransaction(transfer(payment, 'FT-FIRST'));
+
+      // Người thứ hai chuyển vào link đã trả; PayOS gửi webhook đó 5 lần cùng lúc.
+      await Promise.all(
+        Array.from({ length: 5 }, () =>
+          payments.processPayosTransaction(transfer(payment, 'FT-SECOND')),
+        ),
+      );
+
+      const cases = await refunds.list('OPEN', 100);
+      const forPayment = cases.filter((item) => item.paymentId === payment.id);
+      expect(forPayment).toHaveLength(1);
+      expect(forPayment[0]).toMatchObject({
+        source: 'PAYMENT_REVIEW',
+        providerEventId: `${payment.paymentLinkId}:FT-SECOND`,
+        amount: payment.amount,
+      });
+    });
+
+    it('Canteen báo cùng một khoản không áp được 10 lần cùng lúc: một hồ sơ', async () => {
+      const { payment } = await payments.createOrReuse(
+        candidate(`order-${randomUUID()}`),
+      );
+      await payments.processPayosTransaction(transfer(payment, 'FT-PAID'));
+
+      const outcomes = await Promise.all(
+        Array.from({ length: 10 }, () =>
+          refunds.openForUnappliedPayment(payment.id, 'Đơn đã hủy'),
+        ),
+      );
+
+      expect(outcomes.filter((outcome) => outcome === 'OPENED')).toHaveLength(
+        1,
+      );
+      expect(
+        outcomes.filter((outcome) => outcome === 'DUPLICATE'),
+      ).toHaveLength(9);
+    });
+
+    it('10 nhân viên cùng bấm "đã hoàn tiền": đúng một người chốt, payment REFUNDED', async () => {
+      const { payment } = await payments.createOrReuse(
+        candidate(`order-${randomUUID()}`),
+      );
+      await payments.processPayosTransaction(transfer(payment, 'FT-REFUND'));
+      await refunds.openForUnappliedPayment(payment.id, 'Đơn đã hủy');
+      const [opened] = (await refunds.list('OPEN', 100)).filter(
+        (item) => item.paymentId === payment.id,
+      );
+
+      const results = await Promise.all(
+        Array.from({ length: 10 }, (_, staff) =>
+          refunds.resolve(opened.id, 'REFUNDED', `staff-${staff}`, null),
+        ),
+      );
+
+      expect(results.filter((r) => r.outcome === 'RESOLVED')).toHaveLength(1);
+      expect(
+        results.filter((r) => r.outcome === 'ALREADY_RESOLVED'),
+      ).toHaveLength(9);
+      await expect(statusOf(payment.id)).resolves.toBe(PaymentStatus.REFUNDED);
+    });
+
+    it('khoản đã hoàn tiền: Canteen gửi lại sự kiện cũ cũng không mở hồ sơ mới', async () => {
+      const { payment } = await payments.createOrReuse(
+        candidate(`order-${randomUUID()}`),
+      );
+      await payments.processPayosTransaction(transfer(payment, 'FT-LATE'));
+      await refunds.openForUnappliedPayment(payment.id, 'Đơn đã hủy');
+      const [opened] = (await refunds.list('OPEN', 100)).filter(
+        (item) => item.paymentId === payment.id,
+      );
+      await refunds.resolve(opened.id, 'REFUNDED', 'staff-1', 'Đã hoàn');
+
+      await expect(
+        refunds.openForUnappliedPayment(payment.id, 'Đơn đã hủy'),
+      ).resolves.toBe('NOT_SUCCESS');
     });
   },
 );

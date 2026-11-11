@@ -33,3 +33,13 @@ export function releaseLinksRequestContext(
 ): string {
   return JSON.stringify([RELEASE_LINKS_CONTEXT_VERSION, orderId, reason]);
 }
+
+const RESOLVE_REFUND_CONTEXT_VERSION = 'payment.refund-resolve.v1';
+
+/** Gắn mã hồ sơ và kết quả vào chữ ký: chữ ký bị bắt được không dùng để chốt hồ sơ khác hay kết quả khác. */
+export function resolveRefundRequestContext(
+  caseId: unknown,
+  outcome: unknown,
+): string {
+  return JSON.stringify([RESOLVE_REFUND_CONTEXT_VERSION, caseId, outcome]);
+}

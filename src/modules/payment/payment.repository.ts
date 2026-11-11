@@ -19,6 +19,7 @@ import {
   WebhookProcessingStatus,
   WebhookReceiptEntity,
 } from '../../database/entities/webhook-receipt.entity';
+import { insertRefundCase } from './refund.repository';
 
 export interface PayosTransactionInput {
   providerEventId: string;
@@ -329,6 +330,13 @@ export class PaymentRepository {
           null,
           'Không tìm thấy mã thanh toán',
         );
+        await openReviewRefundCase(
+          manager,
+          input,
+          null,
+          null,
+          'Không tìm thấy mã thanh toán',
+        );
         return {
           outcome: 'REVIEW_REQUIRED',
           paymentId: null,
@@ -352,6 +360,13 @@ export class PaymentRepository {
           receiptId,
           WebhookProcessingStatus.REVIEW_REQUIRED,
           payment.id,
+          validationError,
+        );
+        await openReviewRefundCase(
+          manager,
+          input,
+          payment.id,
+          payment.orderId,
           validationError,
         );
         return {
@@ -427,6 +442,30 @@ export class PaymentRepository {
       processedAt: new Date(),
     });
   }
+}
+
+/**
+ * Tiền đã về nhưng không ghi nhận được (trả trùng, lệch tiền, link đã huỷ, mã lạ): mở hồ sơ hoàn tiền
+ * cùng transaction với biên nhận. PayOS báo giao dịch thất bại thì không có tiền về nên bỏ qua.
+ */
+async function openReviewRefundCase(
+  manager: EntityManager,
+  input: PayosTransactionInput,
+  paymentId: string | null,
+  orderId: string | null,
+  reason: string,
+): Promise<void> {
+  if (input.providerValidationError) {
+    return;
+  }
+  await insertRefundCase(manager, {
+    providerEventId: input.providerEventId,
+    paymentId,
+    orderId,
+    amount: input.amount,
+    reason,
+    source: 'PAYMENT_REVIEW',
+  });
 }
 
 /** Lỗi khiến giao dịch phải đối soát tay; `null` nếu được ghi nhận thành công. */

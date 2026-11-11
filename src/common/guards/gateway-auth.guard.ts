@@ -13,11 +13,13 @@ import { GatewaySignatureService } from '../security/gateway-signature.service';
 import {
   createQrRequestContext,
   releaseLinksRequestContext,
+  resolveRefundRequestContext,
 } from '../security/payment-request-context';
 import { userIdOf } from '../utils/user.util';
 
 // Mã đơn là ObjectId nên đường dẫn không cần giải mã; controller kiểm lại định dạng.
 const RELEASE_LINKS_PATH = /\/orders\/([^/]+)\/release-links$/;
+const RESOLVE_REFUND_PATH = /\/refunds\/([^/]+)\/resolve$/;
 
 @Injectable()
 export class GatewayAuthGuard implements CanActivate {
@@ -71,6 +73,10 @@ export class GatewayAuthGuard implements CanActivate {
     const release = RELEASE_LINKS_PATH.exec(request.path);
     if (release) {
       return releaseLinksRequestContext(release[1], record.reason);
+    }
+    const resolve = RESOLVE_REFUND_PATH.exec(request.path);
+    if (resolve) {
+      return resolveRefundRequestContext(resolve[1], record.outcome);
     }
     return undefined;
   }

@@ -29,7 +29,11 @@ trong `PaymentRepository`. Route `orders/:orderId/release-links` (Gateway gọi 
 Canteen huỷ đơn hoặc thu tiền mặt) được tin nhờ chữ ký gắn mã đơn và lý do, không kiểm
 quyền theo người gọi. Giải thích đầy đủ: [PAYMENT.md](PAYMENT.md).
 Transaction và migrations nằm trong `database`; phát sự kiện thanh toán
-nằm trong `modules/outbox` và `modules/rabbitmq`.
+nằm trong `modules/outbox` và `modules/rabbitmq`. Payment cũng **nhận** message:
+`CanteenUnappliedConsumer` đọc queue `payment.canteen.payment.unapplied.v1` (Canteen báo tiền
+không áp được vào đơn) và mở hồ sơ hoàn tiền qua `RefundService`; `RefundController`
+(`/api/payment/refunds`) cho nhân viên xem và chốt. `RabbitMQService` chỉ ack sau khi xử lý
+xong, lỗi tạm chép sang `<queue>.retry`, message hỏng sang `<queue>.dead`.
 
 Gateway mở các route `/api/payment/*` và chuyển webhook PayOS tới đây. Trong
 `backend/compose.vps.yaml`, Payment và PostgreSQL của nó vẫn ở profile

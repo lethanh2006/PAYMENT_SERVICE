@@ -4,6 +4,7 @@ import type { GatewaySignatureService } from '../security/gateway-signature.serv
 import {
   createQrRequestContext,
   releaseLinksRequestContext,
+  resolveRefundRequestContext,
 } from '../security/payment-request-context';
 import { GatewayAuthGuard } from './gateway-auth.guard';
 
@@ -46,6 +47,15 @@ describe('GatewayAuthGuard: ngữ cảnh chữ ký theo route', () => {
         reason: 'ORDER_CANCELLED',
       }),
     ).toBe(releaseLinksRequestContext(ORDER_ID, 'ORDER_CANCELLED'));
+  });
+
+  it('chốt hồ sơ hoàn tiền gắn mã hồ sơ và kết quả', () => {
+    const caseId = 'c0f1d5a4-8a43-4d5c-9a4f-36e3d7f0c002';
+    expect(
+      contextFor('POST', `/api/payment/refunds/${caseId}/resolve`, {
+        outcome: 'REFUNDED',
+      }),
+    ).toBe(resolveRefundRequestContext(caseId, 'REFUNDED'));
   });
 
   it('các route khác chỉ ký danh tính', () => {
